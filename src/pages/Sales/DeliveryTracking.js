@@ -11,14 +11,19 @@ import {
   DoneAll, CalendarMonth,
 } from '@mui/icons-material';
 import {
-  collection, query, where, orderBy, limit, startAfter,
-  getDocs, updateDoc, doc, getCountFromServer, serverTimestamp,
+  collection, query, orderBy, limit, startAfter,
+  getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate, debounce } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
+
+// Estimate total rows for pagination without getCountFromServer
+// If a full page came back, signal "at least one more page"; otherwise we're on the last page
+const estimateTotal = (page, snapSize, pageSize) =>
+  snapSize < pageSize ? page * pageSize + snapSize : (page + 2) * pageSize;
 
 const PAGE_SIZE = 10;
 
@@ -101,58 +106,28 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
     setLoading(true);
     let active = true;
     try {
-      const filters = [
-        where('deliveryType', '==', 'scheduled'),
-        where('isDelivered', '!=', true),
-      ];
-
+      // orderBy only — no composite index needed, filter client-side
       const cursor = page > 0 ? cursorMap[page - 1] : null;
-      const baseQ = query(
+      const snap = await getDocs(query(
         collection(db, 'sales'),
-        where('deliveryType', '==', 'scheduled'),
-        orderBy('isDelivered'),
-        orderBy('deliveryDate', 'asc'),
+        orderBy('saleDate', 'desc'),
         ...(cursor ? [startAfter(cursor)] : []),
-        limit(PAGE_SIZE),
-      );
-
-      const countQ = query(
-        collection(db, 'sales'),
-        where('deliveryType', '==', 'scheduled'),
-        where('isDelivered', '!=', true),
-      );
-
-      const [snap, countSnap] = await Promise.all([
-        getDocs(baseQ),
-        getCountFromServer(countQ).catch(() => ({ data: () => ({ count: 0 }) })),
-      ]);
+        limit(PAGE_SIZE * 5),
+      ));
 
       if (!active) return;
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .filter(d => d.isDelivered !== true);
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.deliveryType === 'scheduled' && d.isDelivered !== true)
+        .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
 
       setRows(docs);
-      setTotal(countSnap.data().count);
+      setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
       setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
     } catch (err) {
       if (!active) return;
-      // Fallback: simpler query without isDelivered filter
-      try {
-        const cursor = page > 0 ? cursorMap[page - 1] : null;
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('deliveryType', '==', 'scheduled'),
-          orderBy('deliveryDate', 'asc'),
-          ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE),
-        ));
-        if (!active) return;
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.isDelivered);
-        setRows(docs);
-        setTotal(docs.length);
-      } catch (e2) {
-        toast.error('Failed to load deliveries');
-      }
+      console.error('[DeliveryTracking] fetchData error:', err);
+      toast.error('Failed to load deliveries: ' + err.message);
     } finally {
       if (active) setLoading(false);
     }
@@ -337,18 +312,16 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
         const cursor = page > 0 ? cursorMap[page - 1] : null;
         const snap = await getDocs(query(
           collection(db, 'sales'),
-          where('isDelivered', '==', true),
-          orderBy('actualDeliveryDate', 'desc'),
+          orderBy('saleDate', 'desc'),
           ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE),
+          limit(PAGE_SIZE * 5),
         ));
-        const countSnap = await getCountFromServer(
-          query(collection(db, 'sales'), where('isDelivered', '==', true))
-        ).catch(() => ({ data: () => ({ count: rows.length }) }));
-
         if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
+        const deliveredDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(d => d.isDelivered === true)
+          .sort((a, b) => (b.actualDeliveryDate || '').localeCompare(a.actualDeliveryDate || ''));
+        setRows(deliveredDocs);
+        setTotal(estimateTotal(page, deliveredDocs.length, PAGE_SIZE));
         setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
       } catch (err) {
         if (!active) return;

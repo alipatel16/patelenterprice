@@ -10,14 +10,19 @@ import {
   SwapHoriz, CheckCircle, Search, Refresh, DoneAll, Inbox,
 } from '@mui/icons-material';
 import {
-  collection, query, where, orderBy, limit, startAfter,
-  getDocs, updateDoc, doc, getCountFromServer, serverTimestamp,
+  collection, query, orderBy, limit, startAfter,
+  getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate, debounce } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
+
+// Estimate total rows for pagination without getCountFromServer
+// If a full page came back, signal "at least one more page"; otherwise we're on the last page
+const estimateTotal = (page, snapSize, pageSize) =>
+  snapSize < pageSize ? page * pageSize + snapSize : (page + 2) * pageSize;
 
 const PAGE_SIZE = 10;
 
@@ -123,24 +128,18 @@ const PendingExchangeTab = ({ db, onReceived }) => {
     try {
       const cursor = page > 0 ? cursorMap[page - 1] : null;
 
+      // Single where clause — no composite index needed. Filter exchangeReceived client-side.
       const snap = await getDocs(query(
         collection(db, 'sales'),
-        where('hasExchange', '==', true),
-        where('exchangeReceived', '==', false),
         orderBy('saleDate', 'desc'),
         ...(cursor ? [startAfter(cursor)] : []),
-        limit(PAGE_SIZE),
+        limit(PAGE_SIZE * 5),
       ));
-
-      const countSnap = await getCountFromServer(
-        query(collection(db, 'sales'),
-          where('hasExchange', '==', true),
-          where('exchangeReceived', '==', false))
-      ).catch(() => ({ data: () => ({ count: 0 }) }));
 
       if (!active) return;
 
-      let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.hasExchange === true && d.exchangeReceived !== true);
 
       // Client-side search filter
       if (debouncedSearch) {
@@ -153,28 +152,12 @@ const PendingExchangeTab = ({ db, onReceived }) => {
       }
 
       setRows(docs);
-      setTotal(countSnap.data().count);
+      setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
       setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
     } catch (err) {
       if (!active) return;
-      // Fallback for missing index - simpler query
-      try {
-        const cursor = page > 0 ? cursorMap[page - 1] : null;
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('hasExchange', '==', true),
-          orderBy('saleDate', 'desc'),
-          ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE * 2),
-        ));
-        if (!active) return;
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.exchangeReceived !== true);
-        setRows(docs.slice(0, PAGE_SIZE));
-        setTotal(docs.length);
-      } catch (e2) {
-        toast.error('Failed to load exchange items');
-      }
+      console.error('[ExchangeTracking] fetchData error:', err);
+      toast.error('Failed to load exchange items: ' + err.message);
     } finally {
       if (active) setLoading(false);
     }
@@ -332,40 +315,25 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
     const run = async () => {
       try {
         const cursor = page > 0 ? cursorMap[page - 1] : null;
+        // Single where clause + client-side filter for received status
         const snap = await getDocs(query(
           collection(db, 'sales'),
-          where('hasExchange', '==', true),
-          where('exchangeReceived', '==', true),
-          orderBy('exchangeReceivedDate', 'desc'),
+          orderBy('saleDate', 'desc'),
           ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE),
+          limit(PAGE_SIZE * 5),
         ));
 
-        const countSnap = await getCountFromServer(
-          query(collection(db, 'sales'),
-            where('hasExchange', '==', true),
-            where('exchangeReceived', '==', true))
-        ).catch(() => ({ data: () => ({ count: 0 }) }));
-
         if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
+        const receivedDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(d => d.exchangeReceived === true)
+          .sort((a, b) => (b.exchangeReceivedDate || '').localeCompare(a.exchangeReceivedDate || ''));
+        setRows(receivedDocs);
+        setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
         setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
       } catch (err) {
-        // Fallback
-        try {
-          const snap = await getDocs(query(
-            collection(db, 'sales'),
-            where('hasExchange', '==', true),
-            where('exchangeReceived', '==', true),
-            orderBy('saleDate', 'desc'),
-            limit(PAGE_SIZE),
-          ));
-          if (!active) return;
-          setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        } catch (e2) {
-          toast.error('Failed to load received exchanges');
-        }
+        if (!active) return;
+        console.error('[ExchangeTracking] received error:', err);
+        toast.error('Failed to load received exchanges: ' + err.message);
       } finally {
         if (active) setLoading(false);
       }
