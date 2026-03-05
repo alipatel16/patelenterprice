@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, TextField,
   MenuItem, Select, FormControl, InputLabel, Divider, Chip,
   FormControlLabel, Checkbox, Radio, RadioGroup, Alert, Autocomplete,
   CircularProgress, Paper, IconButton, Stack, InputAdornment, Dialog,
-  DialogTitle, DialogContent, DialogActions,
+  DialogTitle, DialogContent, DialogActions, Table, TableHead,
+  TableRow, TableCell, TableBody,
 } from '@mui/material';
 import {
   ArrowBack, Save, Delete, AddCircle, PersonAdd,
   SwapHoriz, Receipt, ReceiptLong, LocalShipping, Schedule,
-  CheckCircle,
+  CheckCircle, ViewList,
 } from '@mui/icons-material';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
@@ -24,34 +25,30 @@ import {
 } from '../../constants';
 import { calculateGST, formatCurrency, generateInvoiceNumber } from '../../utils';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs' };
-
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
 };
-
-const DELIVERY_TYPES = {
-  IMMEDIATE: 'immediate',
-  SCHEDULED: 'scheduled',
-};
+const DELIVERY_TYPES = { IMMEDIATE: 'immediate', SCHEDULED: 'scheduled' };
 
 // ─── Quick Add Customer Dialog ────────────────────────────────────────────────
 const NewCustomerDialog = ({ open, onClose, onSave }) => {
   const [form, setForm] = useState(EMPTY_CUSTOMER_FORM);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
-  useEffect(() => { if (open) setForm(EMPTY_CUSTOMER_FORM); }, [open]);
+  useEffect(() => { if (open) { setForm(EMPTY_CUSTOMER_FORM); setError(''); } }, [open]);
   const handleSave = async () => {
     if (!form.name || !form.phone) { toast.error('Name & phone required'); return; }
     setLoading(true);
-    try { await onSave(form); onClose(); } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+    try { await onSave(form); onClose(); } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Quick Add Customer</DialogTitle>
       <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Grid container spacing={2} mt={0}>
           <Grid item xs={6}>
             <FormControl fullWidth size="small"><InputLabel>Type</InputLabel>
@@ -84,9 +81,76 @@ const NewCustomerDialog = ({ open, onClose, onSave }) => {
   );
 };
 
+// ─── Bulk Price Entry Dialog ──────────────────────────────────────────────────
+// One total for all items — no per-item split, shows as "Bulk" label on items
+const BulkPriceDialog = ({ open, onClose, currentBulk, onApply, onClear }) => {
+  const [bulkTotal, setBulkTotal] = useState('');
+
+  useEffect(() => {
+    if (open) setBulkTotal(currentBulk > 0 ? String(currentBulk) : '');
+  }, [open, currentBulk]);
+
+  const total = parseFloat(bulkTotal) || 0;
+
+  const handleConfirm = () => {
+    if (!total || total <= 0) { toast.error('Enter a valid total amount'); return; }
+    onApply(total);
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>
+        <Box display="flex" alignItems="center" gap={1}>
+          <ViewList color="primary" />
+          <Box>
+            <Typography variant="h6" fontWeight={700}>Bulk Price Entry</Typography>
+            <Typography variant="caption" color="text.secondary">Single total for all items</Typography>
+          </Box>
+        </Box>
+      </DialogTitle>
+      <DialogContent>
+        <TextField
+          fullWidth
+          label="Total Amount for All Items (₹)"
+          type="number"
+          value={bulkTotal}
+          onChange={e => setBulkTotal(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleConfirm()}
+          size="small"
+          autoFocus
+          InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+          placeholder="e.g. 18000"
+          sx={{ mt: 1, mb: 1.5 }}
+          helperText="This total will be used as-is — no per-item splitting"
+        />
+        {currentBulk > 0 && (
+          <Alert severity="info" sx={{ py: 0.5 }}>
+            Current bulk total: <strong>{formatCurrency(currentBulk)}</strong>
+          </Alert>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ justifyContent: 'space-between' }}>
+        {currentBulk > 0
+          ? <Button onClick={() => { onClear(); onClose(); }} color="error" variant="text" size="small">
+              Clear Bulk
+            </Button>
+          : <Box />
+        }
+        <Box display="flex" gap={1}>
+          <Button onClick={onClose} variant="outlined">Cancel</Button>
+          <Button onClick={handleConfirm} variant="contained" startIcon={<CheckCircle />} disabled={!total || total <= 0}>
+            Set ₹{total > 0 ? total.toLocaleString('en-IN') : '—'}
+          </Button>
+        </Box>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const CreateSale = () => {
-  const { db, userProfile, storeType } = useAuth();
+  const { db, userProfile } = useAuth();
   const navigate = useNavigate();
   const { id } = useParams();
   const isEdit = Boolean(id);
@@ -95,13 +159,11 @@ const CreateSale = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Lookups
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventory, setInventory] = useState({});
   const [employees, setEmployees] = useState([]);
 
-  // ── Core form state ──
   const [invoiceType, setInvoiceType] = useState('gst');
   const [companyId, setCompanyId] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -110,14 +172,14 @@ const CreateSale = () => {
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
   const [notes, setNotes] = useState('');
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [bulkEntryOpen, setBulkEntryOpen] = useState(false);
+  const [bulkPrice, setBulkPrice] = useState(0); // 0 = not set; >0 = bulk total overrides per-item prices
 
-  // ── Exchange state ──
   const [hasExchange, setHasExchange] = useState(false);
   const [exchangeItem, setExchangeItem] = useState('');
   const [exchangeValue, setExchangeValue] = useState(0);
   const [exchangeReceived, setExchangeReceived] = useState(false);
 
-  // ── Payment state ──
   const [paymentType, setPaymentType] = useState(PAYMENT_TYPES.FULL);
   const [downPayment, setDownPayment] = useState(0);
   const [emiMonths, setEmiMonths] = useState(0);
@@ -125,18 +187,17 @@ const CreateSale = () => {
   const [financerName, setFinancerName] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
 
-  // ── Delivery state ──
   const [deliveryType, setDeliveryType] = useState(DELIVERY_TYPES.IMMEDIATE);
   const [deliveryDate, setDeliveryDate] = useState('');
 
-  // All 4 companies shown regardless of store
+  const dataLoadedRef = useRef(false);
   const allCompanies = Object.values(COMPANIES);
 
-  // ── Load lookups + existing sale ──
   useEffect(() => {
     if (!db) return;
     loadLookups();
     if (id) loadExistingSale();
+    else dataLoadedRef.current = true;
   }, [db]);
 
   const loadLookups = async () => {
@@ -148,7 +209,6 @@ const CreateSale = () => {
     setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setEmployees(empSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-
     const invSnap = await getDocs(collection(db, 'inventory'));
     const invMap = {};
     invSnap.docs.forEach(d => { invMap[d.data().productId] = d.data().stock || 0; });
@@ -180,12 +240,25 @@ const CreateSale = () => {
       setPaymentRef(d.paymentRef || '');
       setDeliveryType(d.deliveryType || DELIVERY_TYPES.IMMEDIATE);
       setDeliveryDate(d.deliveryDate || '');
+      setBulkPrice(d.bulkPrice || 0);
     } finally {
       setLoading(false);
+      setTimeout(() => { dataLoadedRef.current = true; }, 100);
     }
   };
 
-  // ── Item helpers ──
+  // Clear payment fields when payment type changes (only after initial load)
+  const handlePaymentTypeChange = (newType) => {
+    if (dataLoadedRef.current && newType !== paymentType) {
+      setDownPayment(0);
+      setEmiMonths(0);
+      setEmiStartDate('');
+      setFinancerName('');
+      setPaymentRef('');
+    }
+    setPaymentType(newType);
+  };
+
   const setItemField = (idx, k) => val => {
     setItems(prev => {
       const arr = [...prev];
@@ -209,10 +282,20 @@ const CreateSale = () => {
       return arr;
     });
   };
+
   const addItem = () => setItems(p => [...p, { ...EMPTY_ITEM }]);
   const removeItem = idx => setItems(p => p.filter((_, i) => i !== idx));
 
-  // ── Derived calculations ──
+  const handleBulkPriceApply = (total) => {
+    setBulkPrice(total);
+    toast.success(`Bulk price set to ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(total)}!`);
+  };
+
+  const handleBulkPriceClear = () => {
+    setBulkPrice(0);
+    toast.info('Bulk price cleared');
+  };
+
   const itemsWithCalc = items.map(it => {
     const subtotal = (parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0);
     const gst = invoiceType === 'gst'
@@ -221,14 +304,35 @@ const CreateSale = () => {
     return { ...it, subtotal, ...gst };
   });
 
-  const subtotal = itemsWithCalc.reduce((s, it) => s + it.subtotal, 0);
-  const totalTax = itemsWithCalc.reduce((s, it) => s + (it.totalTax || 0), 0);
+  // If bulkPrice is set, it overrides the sum of per-item subtotals
+  const subtotal = bulkPrice > 0 ? bulkPrice : itemsWithCalc.reduce((s, it) => s + it.subtotal, 0);
+  const totalTax = bulkPrice > 0 ? 0 : itemsWithCalc.reduce((s, it) => s + (it.totalTax || 0), 0);
   const exchangeDeduction = hasExchange ? (parseFloat(exchangeValue) || 0) : 0;
   const grandTotal = subtotal - exchangeDeduction;
   const balanceDue = grandTotal - (parseFloat(downPayment) || 0);
   const emiAmount = emiMonths > 0 ? parseFloat((balanceDue / emiMonths).toFixed(2)) : 0;
 
-  // ── Quick-add customer ──
+  // Build EMI installments array (stored inside sale doc now)
+  const buildEmiInstallments = () => {
+    if (paymentType !== PAYMENT_TYPES.EMI || emiMonths <= 0 || !emiStartDate) return [];
+    const result = [];
+    for (let m = 0; m < emiMonths; m++) {
+      const due = new Date(emiStartDate);
+      due.setMonth(due.getMonth() + m);
+      result.push({
+        installmentNumber: m + 1,
+        dueDate: due.toISOString().split('T')[0],
+        amount: emiAmount,
+        paidAmount: 0,
+        status: 'pending',
+        payments: [],
+        dueDateChanges: [],
+        dueDateChangeCount: 0,
+      });
+    }
+    return result;
+  };
+
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
@@ -237,7 +341,6 @@ const CreateSale = () => {
     toast.success('Customer added');
   };
 
-  // ── Save ──
   const handleSave = async () => {
     setError('');
     if (!companyId) { setError('Please select a company / firm'); return; }
@@ -256,9 +359,16 @@ const CreateSale = () => {
 
     setSaving(true);
     try {
-      const countSnap = await getCountFromServer(collection(db, 'sales'));
       const company = COMPANIES[companyId];
-      const invoiceNumber = generateInvoiceNumber(company?.code || 'INV', countSnap.data().count);
+      let invoiceNumber;
+
+      if (isEdit) {
+        const existingSnap = await getDoc(doc(db, 'sales', id));
+        invoiceNumber = existingSnap.data().invoiceNumber;
+      } else {
+        const countSnap = await getCountFromServer(collection(db, 'sales'));
+        invoiceNumber = generateInvoiceNumber(company?.code || 'INV', countSnap.data().count);
+      }
 
       const saleData = {
         invoiceNumber, invoiceType, companyId,
@@ -275,53 +385,73 @@ const CreateSale = () => {
           cgst: it.cgst || 0, sgst: it.sgst || 0, unit: it.unit,
         })),
         subtotal, totalTax, grandTotal,
-        // Exchange
         hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,
-        // Payment
         paymentType,
         downPayment: parseFloat(downPayment) || 0,
         emiMonths: parseInt(emiMonths) || 0,
         emiAmount,
         emiStartDate, financerName, paymentRef, balanceDue,
-        // Delivery
         deliveryType,
         deliveryDate: deliveryType === DELIVERY_TYPES.SCHEDULED ? deliveryDate : '',
-        // Meta
+        isDelivered: deliveryType === DELIVERY_TYPES.IMMEDIATE,
+        bulkPrice: bulkPrice || 0,
         notes,
       };
 
       if (isEdit) {
-        await updateDoc(doc(db, 'sales', id), { ...saleData, updatedAt: serverTimestamp() });
-        toast.success('Sale updated!');
-      } else {
-        const saleRef = await addDoc(collection(db, 'sales'), { ...saleData, createdAt: serverTimestamp() });
+        const existingSnap = await getDoc(doc(db, 'sales', id));
+        const existingData = existingSnap.data();
+        const prevPaymentType = existingData.paymentType;
 
-        // Auto-generate EMI installments
-        if (paymentType === PAYMENT_TYPES.EMI && emiMonths > 0 && emiStartDate) {
-          for (let m = 0; m < emiMonths; m++) {
-            const due = new Date(emiStartDate);
-            due.setMonth(due.getMonth() + m);
-            const dueDateStr = due.toISOString().split('T')[0];
-            await addDoc(collection(db, 'emi_installments'), {
-              saleId: saleRef.id,
-              invoiceNumber: invoiceNumber,
-              customerName: selectedCustomer.name,
-              customerPhone: selectedCustomer.phone,
-              installmentNumber: m + 1,
-              dueDate: dueDateStr,
-              amount: emiAmount,
-              paidAmount: 0,
-              status: 'pending',
-              payments: [],
-              dueDateChanges: [],
-              dueDateChangeCount: 0,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
+        // ── Determine EMI installments ──
+        let emiInstallments;
+        if (paymentType === PAYMENT_TYPES.EMI) {
+          const prevInstallments = existingData.emiInstallments || [];
+          const configChanged =
+            parseInt(emiMonths) !== (existingData.emiMonths || 0) ||
+            emiStartDate !== (existingData.emiStartDate || '') ||
+            Math.abs(emiAmount - (existingData.emiAmount || 0)) > 0.01;
+
+          if (prevPaymentType === PAYMENT_TYPES.EMI && !configChanged && prevInstallments.length > 0) {
+            // Keep existing (preserves payment history)
+            emiInstallments = prevInstallments;
+          } else {
+            // Regenerate — config changed or switching to EMI
+            emiInstallments = buildEmiInstallments();
           }
+        } else {
+          emiInstallments = [];
         }
 
-        // Deduct from inventory
+        // ── Reset sale-level payments if payment type changed ──
+        const paymentReset = prevPaymentType !== paymentType
+          ? {
+              salePayments: [],
+              totalPaidAmount: 0,
+              paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
+            }
+          : {};
+
+        await updateDoc(doc(db, 'sales', id), {
+          ...saleData,
+          emiInstallments,
+          ...paymentReset,
+          updatedAt: serverTimestamp(),
+        });
+        toast.success('Sale updated!');
+      } else {
+        const emiInstallments = buildEmiInstallments();
+
+        await addDoc(collection(db, 'sales'), {
+          ...saleData,
+          emiInstallments,
+          salePayments: [],
+          totalPaidAmount: 0,
+          paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
+          createdAt: serverTimestamp(),
+        });
+
+        // Deduct inventory
         for (const it of items) {
           if (!it.productId) continue;
           const invQ = query(collection(db, 'inventory'), where('productId', '==', it.productId));
@@ -347,46 +477,48 @@ const CreateSale = () => {
 
   if (loading) return <Box display="flex" justifyContent="center" pt={8}><CircularProgress /></Box>;
 
+  // ── Column sizing: gives each field its own column, no overflow ──
+  // With GST:    Product(4) | Qty(1) | Price(2) | GST(2) | Amount(2) | Del(1) = 12
+  // Without GST: Product(5) | Qty(2) | Price(2)          | Amount(2) | Del(1) = 12
+  const withGST = invoiceType === 'gst';
+
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 900, mx: 'auto' }}>
-      {/* Header */}
       <Box display="flex" alignItems="center" gap={2} mb={3}>
         <IconButton onClick={() => navigate('/sales')}><ArrowBack /></IconButton>
         <Box>
           <Typography variant="h5" fontWeight={700}>{isEdit ? 'Edit Sale' : 'New Sale'}</Typography>
-          <Typography variant="body2" color="text.secondary">Record a sale invoice</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {isEdit ? 'Update sale details' : 'Record a new sale transaction'}
+          </Typography>
         </Box>
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {/* ── Invoice Type ── */}
+      {/* ── Invoice Details ── */}
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <Typography variant="subtitle2" fontWeight={600} mb={1}>Invoice Type</Typography>
-          <Stack direction="row" spacing={2}>
-            <FormControlLabel control={<Radio checked={invoiceType === 'gst'} onChange={() => setInvoiceType('gst')} />}
-              label={<Box display="flex" alignItems="center" gap={0.5}><Receipt fontSize="small" />GST Invoice</Box>} />
-            <FormControlLabel control={<Radio checked={invoiceType === 'non_gst'} onChange={() => setInvoiceType('non_gst')} />}
-              label={<Box display="flex" alignItems="center" gap={0.5}><ReceiptLong fontSize="small" />Non-GST Invoice</Box>} />
-          </Stack>
-        </CardContent>
-      </Card>
-
-      {/* ── Sale Details ── */}
-      <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Typography variant="subtitle1" fontWeight={700} mb={2}>Sale Details</Typography>
+          <Typography variant="subtitle1" fontWeight={700} mb={2}>Invoice Details</Typography>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth size="small" required>
+              <FormControl fullWidth size="small">
+                <InputLabel>Invoice Type</InputLabel>
+                <Select value={invoiceType} onChange={e => setInvoiceType(e.target.value)} label="Invoice Type">
+                  <MenuItem value="gst"><Receipt sx={{ mr: 1, fontSize: 16, verticalAlign: 'middle' }} />GST Invoice</MenuItem>
+                  <MenuItem value="non_gst"><ReceiptLong sx={{ mr: 1, fontSize: 16, verticalAlign: 'middle' }} />Non-GST Invoice</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth size="small">
                 <InputLabel>Company / Firm *</InputLabel>
                 <Select value={companyId} onChange={e => setCompanyId(e.target.value)} label="Company / Firm *">
                   {allCompanies.map(c => (
                     <MenuItem key={c.id} value={c.id}>
                       <Box>
-                        <Typography variant="body2">{c.name}</Typography>
-                        <Typography variant="caption" color="text.secondary">{c.code} · GST: {c.gstNumber}</Typography>
+                        <Typography variant="body2" fontWeight={600}>{c.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">{c.code} · {c.storeType}</Typography>
                       </Box>
                     </MenuItem>
                   ))}
@@ -394,17 +526,14 @@ const CreateSale = () => {
               </FormControl>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth label="Sale Date" type="date" value={saleDate}
+              <TextField fullWidth label="Sale Date *" type="date" value={saleDate}
                 onChange={e => setSaleDate(e.target.value)} size="small" InputLabelProps={{ shrink: true }} />
             </Grid>
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth size="small">
-                <InputLabel>Salesperson *</InputLabel>
-                <Select value={salesperson} onChange={e => setSalesperson(e.target.value)} label="Salesperson *">
-                  {employees.map(e => <MenuItem key={e.id} value={e.name}>{e.name} ({e.role})</MenuItem>)}
-                  {!employees.find(e => e.name === userProfile?.name) && (
-                    <MenuItem value={userProfile?.name}>{userProfile?.name} (Me)</MenuItem>
-                  )}
+                <InputLabel>Salesperson</InputLabel>
+                <Select value={salesperson} onChange={e => setSalesperson(e.target.value)} label="Salesperson">
+                  {employees.map(e => <MenuItem key={e.id} value={e.name}>{e.name}</MenuItem>)}
                 </Select>
               </FormControl>
             </Grid>
@@ -415,23 +544,24 @@ const CreateSale = () => {
       {/* ── Customer ── */}
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
             <Typography variant="subtitle1" fontWeight={700}>Customer</Typography>
-            <Button startIcon={<PersonAdd />} size="small" onClick={() => setNewCustomerOpen(true)}>New Customer</Button>
+            <Button size="small" startIcon={<PersonAdd />} onClick={() => setNewCustomerOpen(true)}>
+              New Customer
+            </Button>
           </Box>
           <Autocomplete
             options={customers}
-            getOptionLabel={o => `${o.name} - ${o.phone}`}
+            getOptionLabel={c => `${c.name} — ${c.phone}`}
             value={selectedCustomer}
             onChange={(_, v) => setSelectedCustomer(v)}
-            renderInput={params => <TextField {...params} label="Search & Select Customer *" size="small" />}
+            renderInput={params => <TextField {...params} label="Select Customer *" size="small" />}
             isOptionEqualToValue={(o, v) => o.id === v.id}
           />
           {selectedCustomer && (
             <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}>
               <Typography variant="body2" fontWeight={600}>{selectedCustomer.name}</Typography>
-              <Typography variant="caption" color="text.secondary">{selectedCustomer.phone} • {selectedCustomer.city}</Typography>
-              <Chip label={selectedCustomer.customerType} size="small" sx={{ ml: 1, fontSize: 10, textTransform: 'capitalize' }} />
+              <Typography variant="caption" color="text.secondary">{selectedCustomer.phone}</Typography>
             </Box>
           )}
         </CardContent>
@@ -442,29 +572,56 @@ const CreateSale = () => {
         <CardContent>
           <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
             <Typography variant="subtitle1" fontWeight={700}>Items</Typography>
-            <Button startIcon={<AddCircle />} onClick={addItem} size="small">Add Item</Button>
+            <Box display="flex" alignItems="center" gap={1}>
+              {bulkPrice > 0 && (
+                <Chip
+                  label={`Bulk: ${formatCurrency(bulkPrice)}`}
+                  color="secondary"
+                  size="small"
+                  onDelete={handleBulkPriceClear}
+                />
+              )}
+              {items.length >= 2 && (
+                <Button
+                  size="small"
+                  variant={bulkPrice > 0 ? 'contained' : 'outlined'}
+                  color="secondary"
+                  startIcon={<ViewList />}
+                  onClick={() => setBulkEntryOpen(true)}
+                >
+                  {bulkPrice > 0 ? 'Edit Bulk' : 'Bulk Price'}
+                </Button>
+              )}
+            </Box>
           </Box>
 
           {items.map((item, idx) => {
-            const stock = inventory[item.productId] ?? null;
-            const outOfStock = stock !== null && stock <= 0;
-            const lowStock = stock !== null && stock > 0 && stock <= 5;
-            const subtotalAmt = (parseFloat(item.qty) || 0) * (parseFloat(item.price) || 0);
+            const lineSubtotal = (parseFloat(item.qty) || 0) * (parseFloat(item.price) || 0);
             return (
-              <Box key={idx} sx={{ mb: 2, p: 2, border: '1px solid', borderColor: outOfStock ? 'error.main' : 'divider', borderRadius: 2 }}>
-                {outOfStock && <Alert severity="error" sx={{ mb: 1, py: 0 }}>Out of Stock!</Alert>}
-                {lowStock && <Alert severity="warning" sx={{ mb: 1, py: 0 }}>Low stock: only {stock} left</Alert>}
-                <Grid container spacing={1.5}>
-                  <Grid item xs={12} sm={5}>
+              <Box
+                key={idx}
+                sx={{
+                  mb: 1.5, p: { xs: 1.5, sm: 1.5 },
+                  border: '1px solid', borderColor: 'divider',
+                  borderRadius: 2, bgcolor: 'background.paper',
+                }}
+              >
+                <Grid container spacing={1} alignItems="center">
+                  {/* Product */}
+                  <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
                     <FormControl fullWidth size="small">
                       <InputLabel>Product *</InputLabel>
-                      <Select value={item.productId} onChange={e => setItemField(idx, 'productId')(e.target.value)} label="Product *">
+                      <Select
+                        value={item.productId}
+                        onChange={e => setItemField(idx, 'productId')(e.target.value)}
+                        label="Product *"
+                      >
                         {products.map(p => (
                           <MenuItem key={p.id} value={p.id}>
                             <Box>
                               <Typography variant="body2">{p.name}</Typography>
-                              <Typography variant="caption" color={inventory[p.id] <= 0 ? 'error.main' : 'text.secondary'}>
-                                Stock: {inventory[p.id] ?? 'N/A'} · {formatCurrency(p.price)}
+                              <Typography variant="caption" color="text.secondary">
+                                {formatCurrency(p.price)} · Stock: {inventory[p.id] || 0}
                               </Typography>
                             </Box>
                           </MenuItem>
@@ -472,72 +629,125 @@ const CreateSale = () => {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid item xs={4} sm={2}>
-                    <TextField fullWidth label="Qty" type="number" size="small"
-                      value={item.qty} onChange={e => setItemField(idx, 'qty')(parseFloat(e.target.value))}
-                      inputProps={{ min: 1 }} />
+
+                  {/* Qty */}
+                  <Grid item xs={9} sm={bulkPrice > 0 ? 3 : (withGST ? 1 : 2)}>
+                    <TextField
+                      fullWidth label="Qty" type="number" value={item.qty} size="small"
+                      onChange={e => setItemField(idx, 'qty')(parseFloat(e.target.value) || 1)}
+                      inputProps={{ min: 0.01, step: 0.01 }}
+                    />
                   </Grid>
-                  <Grid item xs={4} sm={2}>
-                    <TextField fullWidth label="Price (₹)" type="number" size="small"
-                      value={item.price} onChange={e => setItemField(idx, 'price')(parseFloat(e.target.value))}
-                      InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
-                      helperText={invoiceType === 'gst' ? 'Incl. GST' : ''} />
-                  </Grid>
-                  {invoiceType === 'gst' && (
+
+                  {/* Price — hidden when bulk active */}
+                  {bulkPrice === 0 && (
+                    <Grid item xs={4} sm={2}>
+                      <TextField
+                        fullWidth label="Price" type="number" value={item.price} size="small"
+                        onChange={e => setItemField(idx, 'price')(parseFloat(e.target.value) || 0)}
+                        InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+                        inputProps={{ min: 0, step: 0.01 }}
+                      />
+                    </Grid>
+                  )}
+
+                  {/* GST% — only when GST mode and not bulk */}
+                  {withGST && bulkPrice === 0 && (
                     <Grid item xs={4} sm={2}>
                       <FormControl fullWidth size="small">
-                        <InputLabel>GST%</InputLabel>
-                        <Select value={item.gstRate} onChange={e => setItemField(idx, 'gstRate')(parseFloat(e.target.value))} label="GST%">
-                          {GST_SLABS.map(r => <MenuItem key={r} value={r}>{r}%</MenuItem>)}
+                        <InputLabel>GST %</InputLabel>
+                        <Select
+                          value={item.gstRate}
+                          onChange={e => setItemField(idx, 'gstRate')(e.target.value)}
+                          label="GST %"
+                        >
+                          {GST_SLABS.map(g => <MenuItem key={g} value={g}>{g}%</MenuItem>)}
                         </Select>
                       </FormControl>
                     </Grid>
                   )}
-                  <Grid item xs={12} sm={1} display="flex" alignItems="center" justifyContent="center">
-                    <IconButton color="error" size="small" onClick={() => removeItem(idx)} disabled={items.length === 1}>
-                      <Delete />
-                    </IconButton>
+
+                  {/* Per-item amount — only when NOT bulk */}
+                  {bulkPrice === 0 && (
+                    <Grid item xs={withGST ? 9 : 7} sm={2}>
+                      <Box sx={{ height: '100%', minHeight: 40, display: 'flex', alignItems: 'center', pl: 0.5 }}>
+                        <Typography variant="body2" fontWeight={700} color="primary.main" noWrap>
+                          {formatCurrency(lineSubtotal)}
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  )}
+
+                  {/* Delete */}
+                  <Grid item xs={3} sm={1}>
+                    <Box display="flex" justifyContent="flex-end" alignItems="center" height="100%">
+                      {items.length > 1 ? (
+                        <IconButton size="small" color="error" onClick={() => removeItem(idx)}>
+                          <Delete fontSize="small" />
+                        </IconButton>
+                      ) : (
+                        <Box sx={{ width: 34 }} />
+                      )}
+                    </Box>
                   </Grid>
                 </Grid>
-                {invoiceType === 'gst' && item.productId && (() => {
-                  const g = calculateGST(subtotalAmt, item.gstRate);
-                  return (
-                    <Box mt={1} display="flex" gap={2} flexWrap="wrap">
-                      <Typography variant="caption" color="text.secondary">Base: {formatCurrency(g.baseAmount)}</Typography>
-                      <Typography variant="caption" color="text.secondary">CGST ({item.gstRate / 2}%): {formatCurrency(g.cgst)}</Typography>
-                      <Typography variant="caption" color="text.secondary">SGST ({item.gstRate / 2}%): {formatCurrency(g.sgst)}</Typography>
-                      <Typography variant="caption" fontWeight={700}>Total: {formatCurrency(subtotalAmt)}</Typography>
-                    </Box>
-                  );
-                })()}
               </Box>
             );
           })}
+
+          {/* Bulk total summary row */}
+          {bulkPrice > 0 && (
+            <Box sx={{
+              mt: 1, px: 2, py: 1.5,
+              bgcolor: 'secondary.50', border: '1px dashed', borderColor: 'secondary.main',
+              borderRadius: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <Typography variant="body2" color="text.secondary">
+                {items.length} item{items.length > 1 ? 's' : ''} · Bulk total
+              </Typography>
+              <Typography variant="subtitle1" fontWeight={800} color="secondary.main">
+                {formatCurrency(bulkPrice)}
+              </Typography>
+            </Box>
+          )}
+
+          <Box mt={1.5}>
+            <Button startIcon={<AddCircle />} onClick={addItem} size="small">Add Item</Button>
+          </Box>
         </CardContent>
       </Card>
 
       {/* ── Exchange ── */}
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <FormControlLabel
-            control={<Checkbox checked={hasExchange} onChange={e => setHasExchange(e.target.checked)} />}
-            label={<Typography fontWeight={600}><SwapHoriz sx={{ mr: 0.5, verticalAlign: 'middle' }} />Exchange Item</Typography>}
-          />
+          <Box display="flex" alignItems="center" gap={1} mb={hasExchange ? 2 : 0}>
+            <SwapHoriz color={hasExchange ? 'primary' : 'disabled'} />
+            <Typography variant="subtitle1" fontWeight={700}>Exchange</Typography>
+            <FormControlLabel
+              control={<Checkbox checked={hasExchange} onChange={e => {
+                setHasExchange(e.target.checked);
+                if (!e.target.checked) { setExchangeItem(''); setExchangeValue(0); setExchangeReceived(false); }
+              }} />}
+              label="Has Exchange Item"
+              sx={{ ml: 'auto', mr: 0 }}
+            />
+          </Box>
           {hasExchange && (
-            <Grid container spacing={2} mt={0.5}>
+            <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth label="Exchange Item Description" value={exchangeItem}
-                  onChange={e => setExchangeItem(e.target.value)} size="small" />
+                <TextField fullWidth label="Exchange Item Description *" value={exchangeItem}
+                  onChange={e => setExchangeItem(e.target.value)} size="small"
+                  placeholder="e.g. Old Samsung TV 32 inch" />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <TextField fullWidth label="Exchange Value (₹)" type="number" value={exchangeValue}
                   onChange={e => setExchangeValue(parseFloat(e.target.value) || 0)} size="small"
                   InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }} />
               </Grid>
-              <Grid item xs={12} sm={2} display="flex" alignItems="center">
+              <Grid item xs={12} sm={3}>
                 <FormControlLabel
                   control={<Checkbox checked={exchangeReceived} onChange={e => setExchangeReceived(e.target.checked)} />}
-                  label="Received"
+                  label="Item Received"
                 />
               </Grid>
             </Grid>
@@ -548,39 +758,22 @@ const CreateSale = () => {
       {/* ── Delivery ── */}
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <Typography variant="subtitle1" fontWeight={700} mb={2}>
-            <LocalShipping sx={{ mr: 1, verticalAlign: 'middle', color: 'primary.main' }} />
-            Delivery Status
+          <Typography variant="subtitle1" fontWeight={700} mb={1}>
+            <LocalShipping sx={{ mr: 1, verticalAlign: 'middle', fontSize: 20 }} />
+            Delivery
           </Typography>
-
-          <RadioGroup
-            row
-            value={deliveryType}
-            onChange={e => { setDeliveryType(e.target.value); setDeliveryDate(''); }}
-          >
-            <FormControlLabel
-              value={DELIVERY_TYPES.IMMEDIATE}
-              control={<Radio color="success" />}
-              label="Delivered"
-            />
-            <FormControlLabel
-              value={DELIVERY_TYPES.SCHEDULED}
-              control={<Radio color="warning" />}
-              label="Scheduled"
-            />
+          <RadioGroup row value={deliveryType}
+            onChange={e => { setDeliveryType(e.target.value); setDeliveryDate(''); }}>
+            <FormControlLabel value={DELIVERY_TYPES.IMMEDIATE} control={<Radio color="success" />} label="Delivered" />
+            <FormControlLabel value={DELIVERY_TYPES.SCHEDULED} control={<Radio color="warning" />} label="Scheduled" />
           </RadioGroup>
-
           {deliveryType === DELIVERY_TYPES.SCHEDULED && (
             <Box mt={2}>
-              <TextField
-                label="Expected Delivery Date *"
-                type="date"
-                value={deliveryDate}
-                onChange={e => setDeliveryDate(e.target.value)}
-                size="small"
+              <TextField label="Expected Delivery Date *" type="date" value={deliveryDate}
+                onChange={e => setDeliveryDate(e.target.value)} size="small"
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ min: new Date().toISOString().split('T')[0] }}
-                sx={{ width: 240 }}
+                sx={{ width: { xs: '100%', sm: 240 } }}
               />
             </Box>
           )}
@@ -592,7 +785,7 @@ const CreateSale = () => {
         <CardContent>
           <Typography variant="subtitle1" fontWeight={700} mb={2}>Payment</Typography>
           <FormControl component="fieldset" fullWidth>
-            <RadioGroup value={paymentType} onChange={e => setPaymentType(e.target.value)}>
+            <RadioGroup value={paymentType} onChange={e => handlePaymentTypeChange(e.target.value)}>
               <Grid container spacing={1}>
                 {Object.entries(PAYMENT_LABELS).map(([v, l]) => (
                   <Grid item xs={12} sm={6} key={v}>
@@ -610,7 +803,14 @@ const CreateSale = () => {
             </RadioGroup>
           </FormControl>
 
-          {/* Payment-specific fields */}
+          {isEdit && paymentType === PAYMENT_TYPES.EMI && (
+            <Alert severity="info" sx={{ mt: 2, py: 0.5 }} icon={false}>
+              <Typography variant="caption">
+                Changing EMI months, start date, or down payment will regenerate installments and clear payment history.
+              </Typography>
+            </Alert>
+          )}
+
           {(paymentType === PAYMENT_TYPES.EMI || paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (
             <Grid container spacing={2} mt={1}>
               <Grid item xs={12} sm={6}>
@@ -622,8 +822,7 @@ const CreateSale = () => {
               {paymentType === PAYMENT_TYPES.EMI && (
                 <>
                   <Grid item xs={12} sm={6}>
-                    <TextField
-                      fullWidth label="Number of EMI Months *" type="number"
+                    <TextField fullWidth label="Number of EMI Months *" type="number"
                       value={emiMonths || ''} size="small"
                       onChange={e => setEmiMonths(parseInt(e.target.value) || 0)}
                       inputProps={{ min: 1, max: 120 }}
@@ -720,14 +919,13 @@ const CreateSale = () => {
                 )}
               </>
             )}
-            {/* Delivery summary row */}
             <Divider />
             <Box display="flex" justifyContent="space-between" alignItems="center">
               <Typography variant="body2" color="text.secondary">Delivery</Typography>
               {deliveryType === DELIVERY_TYPES.IMMEDIATE
                 ? <Chip icon={<CheckCircle sx={{ fontSize: '14px !important' }} />} label="Delivered at sale" color="success" size="small" />
                 : <Chip icon={<Schedule sx={{ fontSize: '14px !important' }} />}
-                    label={deliveryDate ? `Scheduled: ${new Date(deliveryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : 'Scheduled — date TBD'}
+                    label={deliveryDate ? `Scheduled: ${deliveryDate}` : 'Scheduled (date TBD)'}
                     color="warning" size="small" />
               }
             </Box>
@@ -735,16 +933,26 @@ const CreateSale = () => {
         </CardContent>
       </Card>
 
-      {/* ── Actions ── */}
-      <Stack direction="row" spacing={2} justifyContent="flex-end">
-        <Button variant="outlined" onClick={() => navigate('/sales')} size="large">Cancel</Button>
-        <Button variant="contained" size="large" onClick={handleSave} disabled={saving}
-          startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <Save />}>
-          {isEdit ? 'Update Sale' : 'Save Sale'}
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="flex-end">
+        <Button variant="outlined" onClick={() => navigate('/sales')} disabled={saving}>Cancel</Button>
+        <Button variant="contained" onClick={handleSave} disabled={saving}
+          startIcon={saving ? <CircularProgress size={18} /> : <Save />} size="large">
+          {saving ? 'Saving...' : isEdit ? 'Update Sale' : 'Save Sale'}
         </Button>
       </Stack>
 
-      <NewCustomerDialog open={newCustomerOpen} onClose={() => setNewCustomerOpen(false)} onSave={handleAddNewCustomer} />
+      <NewCustomerDialog
+        open={newCustomerOpen}
+        onClose={() => setNewCustomerOpen(false)}
+        onSave={handleAddNewCustomer}
+      />
+      <BulkPriceDialog
+        open={bulkEntryOpen}
+        onClose={() => setBulkEntryOpen(false)}
+        currentBulk={bulkPrice}
+        onApply={handleBulkPriceApply}
+        onClear={handleBulkPriceClear}
+      />
     </Box>
   );
 };

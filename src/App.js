@@ -16,6 +16,9 @@ import Inventory from './pages/Inventory/Inventory';
 import SalesList from './pages/Sales/SalesList';
 import CreateSale from './pages/Sales/CreateSale';
 import SaleDetail from './pages/Sales/SaleDetail';
+import DeliveryTracking from './pages/Sales/DeliveryTracking';
+import ExchangeTracking from './pages/Sales/ExchangeTracking';
+import EmiDues from './pages/Sales/EmiDues';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -51,6 +54,9 @@ const AppContent = () => {
           <Route path="sales/new" element={<CreateSale />} />
           <Route path="sales/edit/:id" element={<CreateSale />} />
           <Route path="sales/:id" element={<SaleDetail />} />
+          <Route path="delivery-tracking" element={<DeliveryTracking />} />
+          <Route path="exchange-tracking" element={<ExchangeTracking />} />
+          <Route path="emi-dues" element={<EmiDues />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

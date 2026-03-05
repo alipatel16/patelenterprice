@@ -10,7 +10,7 @@ import {
   Menu as MenuIcon, Dashboard, People, Inventory2,
   ShoppingCart, PointOfSale, Storefront, Logout,
   AccountCircle, ElectricBolt, Chair, ChevronLeft,
-  LocalShipping, AdminPanelSettings,
+  LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { COMPANIES } from '../../constants';
@@ -21,9 +21,12 @@ const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard', icon: <Dashboard /> },
   { path: '/customers', label: 'Customers', icon: <People /> },
   { path: '/products', label: 'Products', icon: <Storefront /> },
-  { path: '/purchases', label: 'Purchases', icon: <LocalShipping /> },
+  { path: '/purchases', label: 'Purchases', icon: <ShoppingCart /> },
   { path: '/inventory', label: 'Inventory', icon: <Inventory2 /> },
   { path: '/sales', label: 'Sales', icon: <PointOfSale /> },
+  { path: '/delivery-tracking', label: 'Delivery Tracking', icon: <LocalShipping /> },
+  { path: '/exchange-tracking', label: 'Exchange Tracking', icon: <SwapHoriz /> },
+  { path: '/emi-dues', label: 'EMI Dues', icon: <CreditScore /> },
 ];
 
 const Layout = () => {
@@ -84,14 +87,17 @@ const Layout = () => {
       <Divider />
 
       {/* Nav Items */}
-      <List sx={{ flex: 1, py: 1 }}>
+      <List sx={{ flex: 1, py: 1, overflowY: 'auto' }}>
         {NAV_ITEMS.map(({ path, label, icon }) => {
-          const active = location.pathname.startsWith(path);
+          const active = location.pathname === path || (path !== '/sales' && location.pathname.startsWith(path));
+          // For /sales, only exact match or sales sub-routes (not delivery/exchange)
+          const salesActive = path === '/sales' && (location.pathname === '/sales' || location.pathname.startsWith('/sales/'));
+          const isActive = path === '/sales' ? salesActive : active;
           return (
             <ListItem key={path} disablePadding sx={{ px: 1, mb: 0.5 }}>
               <ListItemButton
                 onClick={() => { navigate(path); if (isMobile) setMobileOpen(false); }}
-                selected={active}
+                selected={isActive}
                 sx={{
                   borderRadius: 2,
                   '&.Mui-selected': {
@@ -102,7 +108,7 @@ const Layout = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40 }}>{icon}</ListItemIcon>
-                <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 600 : 400 }} />
+                <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400 }} />
               </ListItemButton>
             </ListItem>
           );
