@@ -88,6 +88,7 @@ const ProductList = () => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [cursorMap, setCursorMap] = useState({});
+  const [refreshKey, setRefreshKey] = useState(0); // ← forces re-fetch after CRUD
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteId, setDeleteId] = useState(null);
@@ -103,7 +104,6 @@ const ProductList = () => {
     }, 450);
   };
 
-  // Single effect with active-flag cancellation
   useEffect(() => {
     if (!db) return;
     let active = true;
@@ -135,6 +135,7 @@ const ProductList = () => {
         setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
       } catch (err) {
         if (!active) return;
+        console.error('ProductList fetch error:', err);
         toast.error('Failed to load products');
       } finally {
         if (active) setLoading(false);
@@ -143,9 +144,14 @@ const ProductList = () => {
 
     run();
     return () => { active = false; };
-  }, [db, page, debouncedSearch]);
+  }, [db, page, debouncedSearch, refreshKey]); // refreshKey in deps
 
-  const resetAndRefetch = () => { setCursorMap({}); setPage(0); };
+  // On CRUD: reset page & cursor, then bump refreshKey to guarantee effect re-runs
+  const resetAndRefetch = () => {
+    setCursorMap({});
+    setPage(0);
+    setRefreshKey(k => k + 1);
+  };
 
   const handleSave = async form => {
     if (editing?.id) {

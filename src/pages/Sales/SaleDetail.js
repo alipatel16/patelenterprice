@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, Payment, CalendarMonth, CheckCircle,
-  AccessTime, Warning, History, MoneyOff, AttachMoney,
+  AccessTime, Warning, History, AttachMoney,
 } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, getDocs, addDoc, updateDoc,
@@ -21,22 +21,22 @@ import { COMPANIES, PAYMENT_LABELS, PAYMENT_TYPES } from '../../constants';
 import { formatCurrency, formatDate, getPaymentStatusColor } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const getInstallmentStatus = (inst) => {
   const today = new Date().toISOString().split('T')[0];
-  if (inst.paidAmount >= inst.amount) return 'paid';
-  if (inst.paidAmount > 0) return 'partial';
+  if ((inst.paidAmount || 0) >= inst.amount) return 'paid';
+  if ((inst.paidAmount || 0) > 0) return 'partial';
   if (inst.dueDate < today) return 'overdue';
   return 'pending';
 };
 
 const StatusChip = ({ status }) => {
   const map = {
-    paid: { label: 'Paid', color: 'success', icon: <CheckCircle sx={{ fontSize: 14 }} /> },
-    partial: { label: 'Partial', color: 'warning', icon: <AttachMoney sx={{ fontSize: 14 }} /> },
-    overdue: { label: 'Overdue', color: 'error', icon: <Warning sx={{ fontSize: 14 }} /> },
-    pending: { label: 'Pending', color: 'default', icon: <AccessTime sx={{ fontSize: 14 }} /> },
+    paid:    { label: 'Paid',     color: 'success', icon: <CheckCircle sx={{ fontSize: 14 }} /> },
+    partial: { label: 'Partial',  color: 'warning', icon: <AttachMoney sx={{ fontSize: 14 }} /> },
+    overdue: { label: 'Overdue',  color: 'error',   icon: <Warning sx={{ fontSize: 14 }} /> },
+    pending: { label: 'Pending',  color: 'default', icon: <AccessTime sx={{ fontSize: 14 }} /> },
   };
   const s = map[status] || map.pending;
   return <Chip icon={s.icon} label={s.label} color={s.color} size="small" sx={{ fontSize: 10 }} />;
@@ -44,7 +44,7 @@ const StatusChip = ({ status }) => {
 
 const PAYMENT_MODES = ['Cash', 'UPI', 'Cheque', 'NEFT / RTGS', 'Other'];
 
-// ─── Record Payment Dialog ───────────────────────────────────────────────────
+// ─── Record Payment Dialog ────────────────────────────────────────────────────
 
 const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
   const remaining = installment ? installment.amount - (installment.paidAmount || 0) : 0;
@@ -68,22 +68,17 @@ const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
   const handleSave = async () => {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { setError('Enter a valid amount'); return; }
-    if (amt > remaining) { setError(`Amount cannot exceed remaining ₹${remaining.toFixed(2)}`); return; }
+    if (amt > remaining + 0.01) { setError(`Amount cannot exceed remaining ${formatCurrency(remaining)}`); return; }
     setLoading(true);
-    try {
-      await onSave({ amount: amt, mode, payDate, notes });
-      onClose();
-    } catch (e) { setError(e.message); }
+    try { await onSave({ amount: amt, mode, payDate, notes }); onClose(); }
+    catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
   if (!installment) return null;
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>
-        Record Payment — Installment #{installment.installmentNumber}
-      </DialogTitle>
+      <DialogTitle>Record Payment — Installment #{installment.installmentNumber}</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Box sx={{ mb: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}>
@@ -136,11 +131,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (open && installment) {
-      setNewDate(installment.dueDate || '');
-      setReason('');
-      setError('');
-    }
+    if (open && installment) { setNewDate(installment.dueDate || ''); setReason(''); setError(''); }
   }, [open, installment]);
 
   const handleSave = async () => {
@@ -148,10 +139,8 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
     if (!reason.trim()) { setError('Please provide a reason for date change'); return; }
     if (newDate === installment.dueDate) { setError('New date is same as current date'); return; }
     setLoading(true);
-    try {
-      await onSave({ newDate, reason });
-      onClose();
-    } catch (e) { setError(e.message); }
+    try { await onSave({ newDate, reason }); onClose(); }
+    catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
@@ -160,20 +149,17 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>
-        Change Due Date — Installment #{installment.installmentNumber}
-      </DialogTitle>
+      <DialogTitle>Change Due Date — Installment #{installment.installmentNumber}</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {changeCount > 0 && (
           <Alert severity="warning" sx={{ mb: 2 }} icon={<History />}>
-            This installment's due date has already been changed <strong>{changeCount} time{changeCount > 1 ? 's' : ''}</strong>.
+            This installment's due date has been changed <strong>{changeCount} time{changeCount > 1 ? 's' : ''}</strong> already.
           </Alert>
         )}
         <Grid container spacing={2}>
           <Grid item xs={12}>
-            <TextField fullWidth label="Current Due Date" value={formatDate(installment.dueDate)}
-              size="small" disabled />
+            <TextField fullWidth label="Current Due Date" value={formatDate(installment.dueDate)} size="small" disabled />
           </Grid>
           <Grid item xs={12}>
             <TextField fullWidth label="New Due Date *" type="date" value={newDate}
@@ -197,7 +183,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
   );
 };
 
-// ─── Tab Panel ───────────────────────────────────────────────────────────────
+// ─── Tab Panel ────────────────────────────────────────────────────────────────
 
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box pt={3}>{children}</Box> : null;
@@ -214,83 +200,99 @@ const SaleDetail = () => {
   const [sale, setSale] = useState(null);
   const [installments, setInstallments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [installmentsError, setInstallmentsError] = useState('');
   const [tab, setTab] = useState(0);
+  const [payDialog, setPayDialog] = useState(null);
+  const [dateDialog, setDateDialog] = useState(null);
 
-  // Dialogs
-  const [payDialog, setPayDialog] = useState(null);     // installment object
-  const [dateDialog, setDateDialog] = useState(null);   // installment object
-
-  // ── Load sale ──
   useEffect(() => {
     if (!db || !id) return;
     loadSale();
+  }, [db, id]);
+
+  const loadInstallments = useCallback(async () => {
+    setInstallmentsError('');
+    try {
+      // NOTE: This query requires a Firestore composite index.
+      // If you see an error in the console with a URL, click that URL to create the index automatically.
+      const q = query(
+        collection(db, 'emi_installments'),
+        where('saleId', '==', id),
+        orderBy('installmentNumber', 'asc')
+      );
+      const snap = await getDocs(q);
+      setInstallments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      // Log full error so the Firestore index creation URL is visible in browser console
+      console.error('[SaleDetail] Failed to load emi_installments:', err);
+      console.error('[SaleDetail] If you see a Firestore index URL above, click it to create the required index.');
+      setInstallmentsError(
+        err.message?.includes('index')
+          ? 'Firestore index required — check the browser console for a link to create it automatically.'
+          : `Failed to load installments: ${err.message}`
+      );
+    }
   }, [db, id]);
 
   const loadSale = async () => {
     setLoading(true);
     try {
       const snap = await getDoc(doc(db, 'sales', id));
-      if (!snap.exists()) { toast.error('Sale not found'); navigate('/sales'); return; }
+      if (!snap.exists()) {
+        console.error('[SaleDetail] Sale not found, id:', id);
+        toast.error('Sale not found');
+        navigate('/sales');
+        return;
+      }
       const saleData = { id: snap.id, ...snap.data() };
       setSale(saleData);
       if (saleData.paymentType === PAYMENT_TYPES.EMI) {
         await loadInstallments();
       }
     } catch (e) {
-      toast.error('Failed to load sale');
+      console.error('[SaleDetail] Failed to load sale:', e);
+      toast.error('Failed to load sale: ' + e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadInstallments = useCallback(async () => {
-    const q = query(
-      collection(db, 'emi_installments'),
-      where('saleId', '==', id),
-      orderBy('installmentNumber', 'asc')
-    );
-    const snap = await getDocs(q);
-    setInstallments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  }, [db, id]);
-
-  // ── Record payment ──
   const handleRecordPayment = async ({ amount, mode, payDate, notes }) => {
     const inst = payDialog;
     const newPaid = (inst.paidAmount || 0) + amount;
     const newStatus = newPaid >= inst.amount ? 'paid' : 'partial';
-
     const payment = { amount, mode, payDate, notes, recordedAt: new Date().toISOString() };
-
-    await updateDoc(doc(db, 'emi_installments', inst.id), {
-      paidAmount: newPaid,
-      status: newStatus,
-      payments: [...(inst.payments || []), payment],
-      updatedAt: serverTimestamp(),
-    });
-
-    toast.success(`Payment of ${formatCurrency(amount)} recorded`);
-    await loadInstallments();
+    try {
+      await updateDoc(doc(db, 'emi_installments', inst.id), {
+        paidAmount: newPaid,
+        status: newStatus,
+        payments: [...(inst.payments || []), payment],
+        updatedAt: serverTimestamp(),
+      });
+      toast.success(`Payment of ${formatCurrency(amount)} recorded`);
+      await loadInstallments();
+    } catch (e) {
+      console.error('[SaleDetail] Failed to record payment:', e);
+      toast.error('Failed to record payment: ' + e.message);
+    }
   };
 
-  // ── Change due date ──
   const handleChangeDueDate = async ({ newDate, reason }) => {
     const inst = dateDialog;
-    const change = {
-      from: inst.dueDate,
-      to: newDate,
-      reason,
-      changedAt: new Date().toISOString(),
-    };
-
-    await updateDoc(doc(db, 'emi_installments', inst.id), {
-      dueDate: newDate,
-      dueDateChanges: [...(inst.dueDateChanges || []), change],
-      dueDateChangeCount: (inst.dueDateChangeCount || 0) + 1,
-      updatedAt: serverTimestamp(),
-    });
-
-    toast.success('Due date updated');
-    await loadInstallments();
+    const change = { from: inst.dueDate, to: newDate, reason, changedAt: new Date().toISOString() };
+    try {
+      await updateDoc(doc(db, 'emi_installments', inst.id), {
+        dueDate: newDate,
+        dueDateChanges: [...(inst.dueDateChanges || []), change],
+        dueDateChangeCount: (inst.dueDateChangeCount || 0) + 1,
+        updatedAt: serverTimestamp(),
+      });
+      toast.success('Due date updated');
+      await loadInstallments();
+    } catch (e) {
+      console.error('[SaleDetail] Failed to change due date:', e);
+      toast.error('Failed to update due date: ' + e.message);
+    }
   };
 
   if (loading) return (
@@ -303,7 +305,6 @@ const SaleDetail = () => {
   const company = COMPANIES[sale.companyId];
   const isEMI = sale.paymentType === PAYMENT_TYPES.EMI;
 
-  // EMI summary calculations
   const totalInstallmentAmount = installments.reduce((s, i) => s + i.amount, 0);
   const totalPaid = installments.reduce((s, i) => s + (i.paidAmount || 0), 0);
   const totalRemaining = totalInstallmentAmount - totalPaid;
@@ -327,25 +328,22 @@ const SaleDetail = () => {
       </Box>
 
       {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 0 }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
           <Tab label="Invoice Details" />
-          <Tab
-            label={
-              isEMI
-                ? <Badge badgeContent={overdueCount > 0 ? overdueCount : null} color="error">
-                    Payment &amp; EMI
-                  </Badge>
-                : 'Payment Info'
-            }
-          />
+          <Tab label={
+            isEMI
+              ? <Badge badgeContent={overdueCount > 0 ? overdueCount : null} color="error">
+                  Payment &amp; EMI
+                </Badge>
+              : 'Payment Info'
+          } />
         </Tabs>
       </Box>
 
       {/* ── Tab 0: Invoice Details ── */}
       <TabPanel value={tab} index={0}>
         <Grid container spacing={2}>
-          {/* Company + Customer */}
           <Grid item xs={12} sm={6}>
             <Card>
               <CardContent>
@@ -369,7 +367,6 @@ const SaleDetail = () => {
             </Card>
           </Grid>
 
-          {/* Items Table */}
           <Grid item xs={12}>
             <Card>
               <CardContent>
@@ -405,8 +402,6 @@ const SaleDetail = () => {
                     </TableBody>
                   </Table>
                 </TableContainer>
-
-                {/* Totals */}
                 <Box sx={{ mt: 2, maxWidth: 300, ml: 'auto', display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2" color="text.secondary">Subtotal</Typography>
@@ -434,7 +429,6 @@ const SaleDetail = () => {
             </Card>
           </Grid>
 
-          {/* Delivery + Salesperson */}
           <Grid item xs={12} sm={6}>
             <Card>
               <CardContent>
@@ -470,7 +464,7 @@ const SaleDetail = () => {
 
       {/* ── Tab 1: Payment & EMI ── */}
       <TabPanel value={tab} index={1}>
-        {/* Payment type summary */}
+        {/* Payment summary */}
         <Card sx={{ mb: 2 }}>
           <CardContent>
             <Grid container spacing={2} alignItems="center">
@@ -523,13 +517,20 @@ const SaleDetail = () => {
         {/* EMI section */}
         {isEMI && (
           <>
-            {/* EMI Progress Summary */}
+            {/* Index error banner */}
+            {installmentsError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {installmentsError}
+              </Alert>
+            )}
+
+            {/* EMI progress summary cards */}
             <Grid container spacing={2} mb={2}>
               {[
-                { label: 'Total EMI Amount', value: formatCurrency(totalInstallmentAmount), color: 'text.primary' },
-                { label: 'Total Paid', value: formatCurrency(totalPaid), color: 'success.main' },
-                { label: 'Remaining', value: formatCurrency(totalRemaining), color: totalRemaining > 0 ? 'error.main' : 'success.main' },
-                { label: 'Paid Installments', value: `${paidCount} / ${installments.length}`, color: 'primary.main' },
+                { label: 'Total EMI Amount',    value: formatCurrency(totalInstallmentAmount), color: 'text.primary' },
+                { label: 'Total Paid',           value: formatCurrency(totalPaid),             color: 'success.main' },
+                { label: 'Remaining',            value: formatCurrency(totalRemaining),        color: totalRemaining > 0 ? 'error.main' : 'success.main' },
+                { label: 'Paid Installments',    value: `${paidCount} / ${installments.length}`, color: 'primary.main' },
               ].map((s, i) => (
                 <Grid item xs={6} sm={3} key={i}>
                   <Paper sx={{ p: 1.5, textAlign: 'center' }}>
@@ -547,19 +548,15 @@ const SaleDetail = () => {
                   <Typography variant="caption" color="text.secondary">Overall EMI Collection Progress</Typography>
                   <Typography variant="caption" fontWeight={700}>{((totalPaid / totalInstallmentAmount) * 100).toFixed(0)}%</Typography>
                 </Box>
-                <LinearProgress
-                  variant="determinate"
-                  value={(totalPaid / totalInstallmentAmount) * 100}
-                  sx={{ height: 8, borderRadius: 4 }}
-                  color={totalRemaining === 0 ? 'success' : 'primary'}
-                />
+                <LinearProgress variant="determinate" value={(totalPaid / totalInstallmentAmount) * 100}
+                  sx={{ height: 8, borderRadius: 4 }} color={totalRemaining === 0 ? 'success' : 'primary'} />
               </Box>
             )}
 
-            {/* Installments Table */}
-            {installments.length === 0 ? (
-              <Alert severity="info">No installments found for this sale.</Alert>
-            ) : (
+            {/* Installments table */}
+            {installments.length === 0 && !installmentsError ? (
+              <Alert severity="info">No installments found. They are created automatically when an EMI sale is saved.</Alert>
+            ) : installments.length > 0 && (
               <Card>
                 <TableContainer>
                   <Table size="small">
@@ -571,7 +568,7 @@ const SaleDetail = () => {
                         <TableCell align="right">Paid</TableCell>
                         <TableCell align="right">Remaining</TableCell>
                         <TableCell align="center">Status</TableCell>
-                        {!isMobile && <TableCell align="center">Date Changes</TableCell>}
+                        {!isMobile && <TableCell align="center">Changes</TableCell>}
                         <TableCell align="right">Actions</TableCell>
                       </TableRow>
                     </TableHead>
@@ -581,46 +578,29 @@ const SaleDetail = () => {
                         const remaining = inst.amount - (inst.paidAmount || 0);
                         const changeCount = inst.dueDateChangeCount || 0;
                         const isPaid = status === 'paid';
-
                         return (
-                          <TableRow
-                            key={inst.id}
-                            sx={{
-                              bgcolor: status === 'overdue' ? 'error.50' : status === 'paid' ? 'success.50' : 'inherit',
-                            }}
-                          >
-                            <TableCell>
-                              <Typography variant="body2" fontWeight={700}>#{inst.installmentNumber}</Typography>
-                            </TableCell>
+                          <TableRow key={inst.id} sx={{
+                            bgcolor: status === 'overdue' ? 'error.50' : status === 'paid' ? 'success.50' : 'inherit',
+                          }}>
+                            <TableCell><Typography variant="body2" fontWeight={700}>#{inst.installmentNumber}</Typography></TableCell>
                             <TableCell>
                               <Typography variant="body2">{formatDate(inst.dueDate)}</Typography>
-                              {changeCount > 0 && !isMobile && (
-                                <Typography variant="caption" color="warning.main">
-                                  (changed {changeCount}×)
-                                </Typography>
+                              {changeCount > 0 && (
+                                <Typography variant="caption" color="warning.main">(changed {changeCount}×)</Typography>
                               )}
                             </TableCell>
-                            <TableCell align="right">
-                              <Typography variant="body2" fontWeight={600}>{formatCurrency(inst.amount)}</Typography>
-                            </TableCell>
-                            <TableCell align="right">
-                              <Typography variant="body2" color="success.main" fontWeight={600}>
-                                {formatCurrency(inst.paidAmount || 0)}
-                              </Typography>
-                            </TableCell>
+                            <TableCell align="right"><Typography variant="body2" fontWeight={600}>{formatCurrency(inst.amount)}</Typography></TableCell>
+                            <TableCell align="right"><Typography variant="body2" color="success.main" fontWeight={600}>{formatCurrency(inst.paidAmount || 0)}</Typography></TableCell>
                             <TableCell align="right">
                               <Typography variant="body2" color={remaining > 0 ? 'error.main' : 'success.main'} fontWeight={600}>
                                 {formatCurrency(remaining)}
                               </Typography>
                             </TableCell>
-                            <TableCell align="center">
-                              <StatusChip status={status} />
-                            </TableCell>
+                            <TableCell align="center"><StatusChip status={status} /></TableCell>
                             {!isMobile && (
                               <TableCell align="center">
                                 {changeCount > 0
-                                  ? <Chip icon={<History sx={{ fontSize: 12 }} />} label={`${changeCount}×`}
-                                      color="warning" size="small" variant="outlined" />
+                                  ? <Chip icon={<History sx={{ fontSize: 12 }} />} label={`${changeCount}×`} color="warning" size="small" variant="outlined" />
                                   : <Typography variant="caption" color="text.secondary">—</Typography>
                                 }
                               </TableCell>
@@ -629,22 +609,14 @@ const SaleDetail = () => {
                               <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                                 <Tooltip title={isPaid ? 'Fully Paid' : 'Record Payment'}>
                                   <span>
-                                    <IconButton
-                                      size="small" color="success"
-                                      disabled={isPaid}
-                                      onClick={() => setPayDialog(inst)}
-                                    >
+                                    <IconButton size="small" color="success" disabled={isPaid} onClick={() => setPayDialog(inst)}>
                                       <Payment fontSize="small" />
                                     </IconButton>
                                   </span>
                                 </Tooltip>
                                 <Tooltip title={isPaid ? 'Already Paid' : 'Change Due Date'}>
                                   <span>
-                                    <IconButton
-                                      size="small" color="warning"
-                                      disabled={isPaid}
-                                      onClick={() => setDateDialog(inst)}
-                                    >
+                                    <IconButton size="small" color="warning" disabled={isPaid} onClick={() => setDateDialog(inst)}>
                                       <CalendarMonth fontSize="small" />
                                     </IconButton>
                                   </span>
@@ -660,7 +632,7 @@ const SaleDetail = () => {
               </Card>
             )}
 
-            {/* Payment history accordion-style per installment */}
+            {/* Payment history */}
             {installments.some(i => i.payments?.length > 0) && (
               <Box mt={3}>
                 <Typography variant="subtitle2" fontWeight={700} mb={1}>Payment History</Typography>
@@ -677,9 +649,7 @@ const SaleDetail = () => {
                             <Typography variant="body2">{formatDate(p.payDate)} · {p.mode}</Typography>
                             {p.notes && <Typography variant="caption" color="text.secondary">{p.notes}</Typography>}
                           </Box>
-                          <Typography variant="body2" fontWeight={700} color="success.main">
-                            + {formatCurrency(p.amount)}
-                          </Typography>
+                          <Typography variant="body2" fontWeight={700} color="success.main">+ {formatCurrency(p.amount)}</Typography>
                         </Box>
                       ))}
                     </CardContent>
@@ -700,11 +670,9 @@ const SaleDetail = () => {
                       </Typography>
                       {inst.dueDateChanges.map((c, ci) => (
                         <Box key={ci} sx={{ py: 0.5, borderBottom: ci < inst.dueDateChanges.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }}>
-                          <Typography variant="body2">
-                            {formatDate(c.from)} → <strong>{formatDate(c.to)}</strong>
-                          </Typography>
+                          <Typography variant="body2">{formatDate(c.from)} → <strong>{formatDate(c.to)}</strong></Typography>
                           <Typography variant="caption" color="text.secondary">
-                            Reason: {c.reason} · {formatDate(c.changedAt?.split('T')[0])}
+                            Reason: {c.reason} · {c.changedAt ? formatDate(c.changedAt.split('T')[0]) : ''}
                           </Typography>
                         </Box>
                       ))}
@@ -716,7 +684,7 @@ const SaleDetail = () => {
           </>
         )}
 
-        {/* Non-EMI payment info */}
+        {/* Non-EMI */}
         {!isEMI && (
           <Alert severity="info">
             This sale uses <strong>{PAYMENT_LABELS[sale.paymentType]}</strong> — no EMI installments to track.
@@ -725,19 +693,8 @@ const SaleDetail = () => {
         )}
       </TabPanel>
 
-      {/* Dialogs */}
-      <RecordPaymentDialog
-        open={Boolean(payDialog)}
-        onClose={() => setPayDialog(null)}
-        installment={payDialog}
-        onSave={handleRecordPayment}
-      />
-      <ChangeDueDateDialog
-        open={Boolean(dateDialog)}
-        onClose={() => setDateDialog(null)}
-        installment={dateDialog}
-        onSave={handleChangeDueDate}
-      />
+      <RecordPaymentDialog open={Boolean(payDialog)} onClose={() => setPayDialog(null)} installment={payDialog} onSave={handleRecordPayment} />
+      <ChangeDueDateDialog open={Boolean(dateDialog)} onClose={() => setDateDialog(null)} installment={dateDialog} onSave={handleChangeDueDate} />
     </Box>
   );
 };

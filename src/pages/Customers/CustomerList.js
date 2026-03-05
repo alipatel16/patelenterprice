@@ -92,13 +92,13 @@ const CustomerList = () => {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [catFilter, setCatFilter] = useState('all');
-  const [cursorMap, setCursorMap] = useState({});   // page index → last Firestore doc
+  const [cursorMap, setCursorMap] = useState({});
+  const [refreshKey, setRefreshKey] = useState(0); // ← forces re-fetch after CRUD
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteId, setDeleteId] = useState(null);
   const searchTimer = useRef(null);
 
-  // Debounce search: only update debouncedSearch after 450 ms of no typing
   const handleSearch = val => {
     setSearch(val);
     clearTimeout(searchTimer.current);
@@ -109,7 +109,6 @@ const CustomerList = () => {
     }, 450);
   };
 
-  // ── Single effect ── fires once per dep change; `active` flag prevents stale setState
   useEffect(() => {
     if (!db) return;
     let active = true;
@@ -146,6 +145,7 @@ const CustomerList = () => {
         setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
       } catch (err) {
         if (!active) return;
+        console.error('CustomerList fetch error:', err);
         toast.error('Failed to load customers');
       } finally {
         if (active) setLoading(false);
@@ -154,9 +154,14 @@ const CustomerList = () => {
 
     run();
     return () => { active = false; };
-  }, [db, page, typeFilter, catFilter, debouncedSearch]);
+  }, [db, page, typeFilter, catFilter, debouncedSearch, refreshKey]); // refreshKey in deps
 
-  const resetAndRefetch = () => { setCursorMap({}); setPage(0); };
+  // On CRUD: reset page & cursor, then bump refreshKey to guarantee effect re-runs
+  const resetAndRefetch = () => {
+    setCursorMap({});
+    setPage(0);
+    setRefreshKey(k => k + 1);
+  };
 
   const handleSave = async form => {
     if (editing?.id) {
@@ -180,6 +185,7 @@ const CustomerList = () => {
     setter(e.target.value);
     setPage(0);
     setCursorMap({});
+    setRefreshKey(k => k + 1);
   };
 
   return (
