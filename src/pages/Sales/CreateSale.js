@@ -639,7 +639,7 @@ const CreateSale = () => {
                   <Grid item xs={9} sm={bulkPrice > 0 ? 3 : (withGST ? 1 : 2)}>
                     <TextField
                       fullWidth label="Qty" type="number" value={item.qty} size="small"
-                      onChange={e => setItemField(idx, 'qty')(parseFloat(e.target.value) || 1)}
+                      onChange={e => setItemField(idx, 'qty')(parseFloat(e.target.value))}
                       inputProps={{ min: 0.01, step: 0.01 }}
                     />
                   </Grid>
@@ -649,7 +649,7 @@ const CreateSale = () => {
                     <Grid item xs={4} sm={2}>
                       <TextField
                         fullWidth label="Price" type="number" value={item.price} size="small"
-                        onChange={e => setItemField(idx, 'price')(parseFloat(e.target.value) || 0)}
+                        onChange={e => setItemField(idx, 'price')(parseFloat(e.target.value))}
                         InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
                         inputProps={{ min: 0, step: 0.01 }}
                       />

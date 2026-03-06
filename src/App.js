@@ -23,6 +23,13 @@ import QuotationsList from './pages/Quotations/QuotationsList';
 import CreateQuotation from './pages/Quotations/CreateQuotation';
 import QuotationDetail from './pages/Quotations/QuotationDetail';
 
+// ── Gift Module ──
+import GiftInvoiceList from './pages/Gifts/GiftInvoiceList';
+import CreateGiftInvoice from './pages/Gifts/CreateGiftInvoice';
+import GiftInvoiceDetail from './pages/Gifts/GiftInvoiceDetail';
+import GiftSetList from './pages/Gifts/GiftSetList';
+import GiftSetForm from './pages/Gifts/GiftSetForm';
+
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
@@ -53,6 +60,8 @@ const AppContent = () => {
           <Route path="products" element={<ProductList />} />
           <Route path="purchases" element={<PurchaseList />} />
           <Route path="inventory" element={<Inventory />} />
+
+          {/* Sales */}
           <Route path="sales" element={<SalesList />} />
           <Route path="sales/new" element={<CreateSale />} />
           <Route path="sales/edit/:id" element={<CreateSale />} />
@@ -60,10 +69,23 @@ const AppContent = () => {
           <Route path="delivery-tracking" element={<DeliveryTracking />} />
           <Route path="exchange-tracking" element={<ExchangeTracking />} />
           <Route path="emi-dues" element={<EmiDues />} />
+
+          {/* Quotations */}
           <Route path="quotations" element={<QuotationsList />} />
           <Route path="quotations/new" element={<CreateQuotation />} />
           <Route path="quotations/edit/:id" element={<CreateQuotation />} />
           <Route path="quotations/:id" element={<QuotationDetail />} />
+
+          {/* Gift Invoices — specific routes BEFORE :id param */}
+          <Route path="gift-invoices" element={<GiftInvoiceList />} />
+          <Route path="gift-invoices/new" element={<CreateGiftInvoice />} />
+          <Route path="gift-invoices/edit/:id" element={<CreateGiftInvoice />} />
+          <Route path="gift-invoices/:id" element={<GiftInvoiceDetail />} />
+
+          {/* Gift Sets */}
+          <Route path="gift-sets" element={<GiftSetList />} />
+          <Route path="gift-sets/new" element={<GiftSetForm />} />
+          <Route path="gift-sets/edit/:id" element={<GiftSetForm />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

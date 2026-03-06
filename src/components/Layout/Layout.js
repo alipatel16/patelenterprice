@@ -10,7 +10,8 @@ import {
   Menu as MenuIcon, Dashboard, People, Inventory2,
   ShoppingCart, PointOfSale, Storefront, Logout,
   AccountCircle, ElectricBolt, Chair, ChevronLeft,
-  LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore, Description
+  LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore,
+  Description, CardGiftcard,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { COMPANIES } from '../../constants';
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { path: '/exchange-tracking', label: 'Exchange Tracking', icon: <SwapHoriz /> },
   { path: '/emi-dues', label: 'EMI Dues', icon: <CreditScore /> },
   { path: '/quotations', label: 'Quotations', icon: <Description /> },
+  { path: '/gift-invoices', label: 'Gift Invoices', icon: <CardGiftcard /> },
 ];
 
 const Layout = () => {
@@ -90,10 +92,12 @@ const Layout = () => {
       {/* Nav Items */}
       <List sx={{ flex: 1, py: 1, overflowY: 'auto' }}>
         {NAV_ITEMS.map(({ path, label, icon }) => {
-          const active = location.pathname === path || (path !== '/sales' && location.pathname.startsWith(path));
-          // For /sales, only exact match or sales sub-routes (not delivery/exchange)
           const salesActive = path === '/sales' && (location.pathname === '/sales' || location.pathname.startsWith('/sales/'));
-          const isActive = path === '/sales' ? salesActive : active;
+          const giftActive = path === '/gift-invoices' && (location.pathname === '/gift-invoices' || location.pathname.startsWith('/gift-invoices/') || location.pathname.startsWith('/gift-sets'));
+          const defaultActive = path !== '/sales' && path !== '/gift-invoices' &&
+            (location.pathname === path || location.pathname.startsWith(path + '/'));
+          const isActive = salesActive || giftActive || defaultActive;
+
           return (
             <ListItem key={path} disablePadding sx={{ px: 1, mb: 0.5 }}>
               <ListItemButton
@@ -109,7 +113,10 @@ const Layout = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40 }}>{icon}</ListItemIcon>
-                <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400 }} />
+                <ListItemText
+                  primary={label}
+                  primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400 }}
+                />
               </ListItemButton>
             </ListItem>
           );
@@ -130,11 +137,11 @@ const Layout = () => {
             size="small"
             icon={userProfile?.role === 'admin' ? <AdminPanelSettings sx={{ fontSize: '12px !important' }} /> : undefined}
             color={userProfile?.role === 'admin' ? 'primary' : 'default'}
-            sx={{ height: 18, fontSize: 10 }}
+            sx={{ height: 18, fontSize: 10, mt: 0.25 }}
           />
         </Box>
         <Tooltip title="Logout">
-          <IconButton size="small" onClick={handleLogout} color="error">
+          <IconButton size="small" onClick={handleLogout}>
             <Logout fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -144,54 +151,64 @@ const Layout = () => {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      {/* AppBar (mobile only) */}
+      {/* Mobile AppBar */}
       {isMobile && (
-        <AppBar position="fixed" elevation={0} sx={{ zIndex: theme.zIndex.drawer + 1 }}>
+        <AppBar position="fixed" sx={{ zIndex: theme.zIndex.drawer + 1 }}>
           <Toolbar>
-            <IconButton color="inherit" edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }}>
+            <IconButton color="inherit" edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 2 }}>
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" fontWeight={700} flex={1}>
-              {isElectronics ? 'Electronics' : 'Furniture'} Store
+            <Typography variant="h6" fontWeight={700} noWrap>
+              {isElectronics ? 'Electronics' : 'Furniture'} ERP
             </Typography>
+            <Box flex={1} />
             <IconButton color="inherit" onClick={e => setAnchorEl(e.currentTarget)}>
               <AccountCircle />
             </IconButton>
-            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
-              <MenuItem onClick={handleLogout}><Logout fontSize="small" sx={{ mr: 1 }} /> Logout</MenuItem>
-            </Menu>
           </Toolbar>
         </AppBar>
       )}
 
-      {/* Drawer */}
+      {/* Sidebar Drawer */}
       {isMobile ? (
         <Drawer
           variant="temporary" open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           ModalProps={{ keepMounted: true }}
-          sx={{ '& .MuiDrawer-paper': { width: DRAWER_WIDTH } }}
+          sx={{ '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' } }}
         >
           {drawerContent}
         </Drawer>
       ) : (
         <Drawer
           variant="permanent"
-          sx={{ width: DRAWER_WIDTH, flexShrink: 0, '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box', border: 'none', boxShadow: '2px 0 8px rgba(0,0,0,0.06)' } }}
+          sx={{
+            width: DRAWER_WIDTH, flexShrink: 0,
+            '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' },
+          }}
         >
           {drawerContent}
         </Drawer>
       )}
 
-      {/* Main Content */}
+      {/* Main content */}
       <Box component="main" sx={{
-        flexGrow: 1, minHeight: '100vh',
+        flexGrow: 1, minWidth: 0,
+        mt: isMobile ? 8 : 0,
         bgcolor: 'background.default',
-        pt: isMobile ? 8 : 0,
-        overflow: 'hidden',
+        minHeight: '100vh',
       }}>
         <Outlet />
       </Box>
+
+      {/* Desktop user menu */}
+      <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
+        <MenuItem disabled>
+          <Typography variant="body2">{userProfile?.name}</Typography>
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={handleLogout}><Logout fontSize="small" sx={{ mr: 1 }} /> Logout</MenuItem>
+      </Menu>
     </Box>
   );
 };
