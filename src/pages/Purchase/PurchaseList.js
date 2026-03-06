@@ -11,13 +11,18 @@ import {
 } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
-  addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
+  addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp,
   getCountFromServer, where,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate, calculateGST, debounce } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
+import {
+  applyInventoryDeltas,
+  applyNewPurchaseInventory,
+  reversePurchaseInventory,
+} from '../../utils/inventoryUtils';
 
 const EMPTY_PURCHASE = {
   supplierName: '', supplierGst: '', invoiceNumber: '',
@@ -71,16 +76,16 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Typography fontWeight={700}>{initial?.id ? 'Edit Purchase' : 'Record Purchase'}</Typography>
-        <IconButton onClick={onClose}><Close /></IconButton>
+        <IconButton onClick={onClose} size="small"><Close /></IconButton>
       </DialogTitle>
       <DialogContent dividers>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-        <Grid container spacing={2} mb={2}>
+        <Grid container spacing={2}>
           <Grid item xs={12} sm={6}>
             <TextField fullWidth label="Supplier Name *" value={form.supplierName} onChange={setField('supplierName')} size="small" />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField fullWidth label="Supplier GSTIN" value={form.supplierGst} onChange={setField('supplierGst')} size="small" />
+            <TextField fullWidth label="Supplier GST" value={form.supplierGst} onChange={setField('supplierGst')} size="small" />
           </Grid>
           <Grid item xs={12} sm={6}>
             <TextField fullWidth label="Invoice Number" value={form.invoiceNumber} onChange={setField('invoiceNumber')} size="small" />
@@ -90,62 +95,71 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
           </Grid>
         </Grid>
 
-        <Divider sx={{ mb: 2 }} />
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-          <Typography variant="subtitle2" fontWeight={600}>Items</Typography>
-          <Button startIcon={<AddCircle />} size="small" onClick={addItem}>Add Item</Button>
+        <Divider sx={{ my: 2 }} />
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+          <Typography fontWeight={600}>Items</Typography>
+          <Button size="small" startIcon={<AddCircle />} onClick={addItem}>Add Item</Button>
         </Box>
 
-        {form.items.map((item, idx) => (
-          <Box key={idx} sx={{ mb: 1.5, p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-            <Grid container spacing={1.5} alignItems="center">
-              <Grid item xs={12} sm={5}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Product</InputLabel>
-                  <Select value={item.productId} onChange={e => setItem(idx, 'productId')(e.target.value)} label="Product">
-                    {products.map(p => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={4} sm={2}>
-                <TextField fullWidth label="Qty" type="number" value={item.qty}
-                  onChange={e => setItem(idx, 'qty')(parseFloat(e.target.value))} size="small" />
-              </Grid>
-              <Grid item xs={4} sm={2}>
-                <TextField fullWidth label="Price (₹)" type="number" value={item.price}
-                  onChange={e => setItem(idx, 'price')(parseFloat(e.target.value))} size="small" />
-              </Grid>
-              <Grid item xs={4} sm={2}>
-                <TextField fullWidth label="GST%" type="number" value={item.gstRate}
-                  onChange={e => setItem(idx, 'gstRate')(parseFloat(e.target.value))} size="small" />
-              </Grid>
-              <Grid item xs={12} sm={1} sx={{ display: 'flex', justifyContent: 'center' }}>
-                <IconButton color="error" size="small" onClick={() => removeItem(idx)} disabled={form.items.length === 1}>
-                  <RemoveCircle />
-                </IconButton>
-              </Grid>
+        {form.items.map((it, idx) => (
+          <Grid container spacing={1} key={idx} sx={{ mb: 1 }} alignItems="center">
+            <Grid item xs={12} sm={4}>
+              <Autocomplete
+                size="small"
+                options={products}
+                getOptionLabel={p => p.name || ''}
+                value={products.find(p => p.id === it.productId) || null}
+                onChange={(_, v) => setItem(idx, 'productId')(v?.id || '')}
+                renderInput={params => <TextField {...params} label="Product *" />}
+              />
             </Grid>
-            <Typography variant="caption" color="text.secondary" mt={0.5} display="block">
-              Amount: {formatCurrency((item.qty || 0) * (item.price || 0))}
-            </Typography>
-          </Box>
+            <Grid item xs={4} sm={2}>
+              <TextField fullWidth size="small" label="Qty *" type="number" value={it.qty}
+                onChange={e => setItem(idx, 'qty')(parseFloat(e.target.value) || 0)} />
+            </Grid>
+            <Grid item xs={4} sm={2}>
+              <TextField fullWidth size="small" label="Price *" type="number" value={it.price}
+                onChange={e => setItem(idx, 'price')(parseFloat(e.target.value) || 0)} />
+            </Grid>
+            <Grid item xs={4} sm={2}>
+              <FormControl fullWidth size="small">
+                <InputLabel>GST%</InputLabel>
+                <Select value={it.gstRate} onChange={e => setItem(idx, 'gstRate')(e.target.value)} label="GST%">
+                  {[0, 5, 12, 18, 28].map(r => <MenuItem key={r} value={r}>{r}%</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={2} sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+              <Typography variant="body2" fontWeight={600} sx={{ mr: 1 }}>
+                {formatCurrency((it.qty || 0) * (it.price || 0))}
+              </Typography>
+              {form.items.length > 1 && (
+                <IconButton size="small" color="error" onClick={() => removeItem(idx)}>
+                  <RemoveCircle fontSize="small" />
+                </IconButton>
+              )}
+            </Grid>
+          </Grid>
         ))}
 
-        <Box textAlign="right" mt={2}>
-          <Typography variant="subtitle1" fontWeight={700}>Grand Total: {formatCurrency(grandTotal)}</Typography>
+        <Box mt={2} textAlign="right">
+          <Typography variant="h6" fontWeight={700}>Grand Total: {formatCurrency(grandTotal)}</Typography>
         </Box>
 
         <TextField fullWidth label="Notes" value={form.notes} onChange={setField('notes')} size="small" multiline rows={2} sx={{ mt: 2 }} />
       </DialogContent>
-      <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button onClick={onClose} variant="outlined">Cancel</Button>
-        <Button onClick={handleSave} variant="contained" disabled={loading} startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={handleSave} variant="contained" disabled={loading}
+          startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
           {initial?.id ? 'Update' : 'Save Purchase'}
         </Button>
       </DialogActions>
     </Dialog>
   );
 };
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 const PurchaseList = () => {
   const { db } = useAuth();
@@ -198,51 +212,47 @@ const PurchaseList = () => {
 
   useEffect(() => { fetchPurchases(page); }, [page]);
 
-  // FIX: trigger a fresh fetch when search changes (debounced)
   const debouncedFetch = useCallback(debounce(() => { setPage(0); fetchPurchases(0); }, 400), [fetchPurchases]);
   useEffect(() => { debouncedFetch(); }, [search]);
 
+  // ── EDIT: pure delta (newQty − oldQty). CREATE: add new stock ─────────────
   const handleSave = async (form) => {
-    if (editing?.id) {
-      await updateDoc(doc(db, 'purchases', editing.id), { ...form, updatedAt: serverTimestamp() });
-      toast.success('Purchase updated');
-    } else {
-      // Save purchase and update inventory
-      const purchaseRef = await addDoc(collection(db, 'purchases'), { ...form, createdAt: serverTimestamp() });
-      // Update inventory for each item
-      for (const item of form.items) {
-        if (!item.productId) continue;
-        const invQuery = query(collection(db, 'inventory'), where('productId', '==', item.productId));
-        const invSnap = await getDocs(invQuery);
-        if (invSnap.empty) {
-          await addDoc(collection(db, 'inventory'), {
-            productId: item.productId,
-            productName: item.productName,
-            stock: item.qty,
-            purchasedQty: item.qty,
-            soldQty: 0,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          const invDoc = invSnap.docs[0];
-          await updateDoc(doc(db, 'inventory', invDoc.id), {
-            stock: (invDoc.data().stock || 0) + item.qty,
-            purchasedQty: (invDoc.data().purchasedQty || 0) + item.qty,
-            updatedAt: serverTimestamp(),
-          });
-        }
+    try {
+      if (editing?.id) {
+        // Read old items from Firestore (source of truth — not UI state)
+        const oldSnap = await getDoc(doc(db, 'purchases', editing.id));
+        const oldItems = oldSnap.exists() ? (oldSnap.data().items || []) : [];
+
+        // Apply NET delta only. If qty unchanged → delta = 0 → no write.
+        await applyInventoryDeltas(db, oldItems, form.items || [], 'purchase');
+        await updateDoc(doc(db, 'purchases', editing.id), { ...form, updatedAt: serverTimestamp() });
+        toast.success('Purchase updated & inventory reconciled');
+      } else {
+        await addDoc(collection(db, 'purchases'), { ...form, createdAt: serverTimestamp() });
+        await applyNewPurchaseInventory(db, form.items || []);
+        toast.success('Purchase recorded & inventory updated');
       }
-      toast.success('Purchase recorded & inventory updated');
+      fetchPurchases(page);
+    } catch (e) {
+      toast.error('Failed to save purchase: ' + e.message);
+      throw e; // re-throw so dialog shows error
     }
-    fetchPurchases(page);
   };
 
+  // ── DELETE: reverse all stock this purchase added ─────────────────────────
   const handleDelete = async () => {
-    await deleteDoc(doc(db, 'purchases', deleteId));
-    toast.success('Purchase deleted');
-    setDeleteId(null);
-    fetchPurchases(page);
+    try {
+      const purchaseSnap = await getDoc(doc(db, 'purchases', deleteId));
+      if (purchaseSnap.exists()) {
+        await reversePurchaseInventory(db, purchaseSnap.data().items || []);
+      }
+      await deleteDoc(doc(db, 'purchases', deleteId));
+      toast.success('Purchase deleted & inventory updated');
+      setDeleteId(null);
+      fetchPurchases(page);
+    } catch (e) {
+      toast.error('Failed to delete purchase: ' + e.message);
+    }
   };
 
   return (
@@ -285,9 +295,11 @@ const PurchaseList = () => {
                   ))}</TableRow>
                 ))
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={isMobile ? 4 : 6} align="center" sx={{ py: 4 }}>
-                  <Typography color="text.secondary">No purchases recorded</Typography>
-                </TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={isMobile ? 4 : 6} align="center" sx={{ py: 4 }}>
+                    <Typography color="text.secondary">No purchases recorded</Typography>
+                  </TableCell>
+                </TableRow>
               ) : rows.map(row => (
                 <TableRow key={row.id} hover>
                   <TableCell>
@@ -297,7 +309,9 @@ const PurchaseList = () => {
                   {!isMobile && <TableCell>{row.invoiceNumber || '-'}</TableCell>}
                   {!isMobile && <TableCell>{formatDate(row.invoiceDate)}</TableCell>}
                   <TableCell>{row.items?.length || 0} items</TableCell>
-                  <TableCell><Typography fontWeight={600} color="error.main">{formatCurrency(row.grandTotal)}</Typography></TableCell>
+                  <TableCell>
+                    <Typography fontWeight={600} color="error.main">{formatCurrency(row.grandTotal)}</Typography>
+                  </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Edit">
                       <IconButton size="small" onClick={() => { setEditing(row); setDialogOpen(true); }}>
@@ -322,13 +336,18 @@ const PurchaseList = () => {
       </Card>
 
       <PurchaseFormDialog
-        open={dialogOpen} onClose={() => setDialogOpen(false)}
-        onSave={handleSave} initial={editing} products={products}
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onSave={handleSave}
+        initial={editing}
+        products={products}
       />
 
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Purchase?</DialogTitle>
-        <DialogContent><Typography>This action cannot be undone.</Typography></DialogContent>
+        <DialogContent>
+          <Typography>This will delete the purchase and reverse its inventory quantities. This action cannot be undone.</Typography>
+        </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteId(null)}>Cancel</Button>
           <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>

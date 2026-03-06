@@ -25,6 +25,11 @@ import {
 } from '../../constants';
 import { calculateGST, formatCurrency, generateInvoiceNumber } from '../../utils';
 
+import {
+  applyInventoryDeltas,
+  applyNewSaleInventory,
+} from '../../utils/inventoryUtils';
+
 const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs' };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
@@ -341,139 +346,140 @@ const CreateSale = () => {
     toast.success('Customer added');
   };
 
+    const buildSaleData = (invoiceNumber, company) => ({
+    invoiceNumber, invoiceType, companyId,
+    companyName: company?.name,
+    customerId: selectedCustomer.id,
+    customerName: selectedCustomer.name,
+    customerPhone: selectedCustomer.phone,
+    salesperson, saleDate,
+    items: itemsWithCalc.map(it => ({
+      productId: it.productId, productName: it.productName,
+      qty: parseFloat(it.qty), price: parseFloat(it.price),
+      gstRate: it.gstRate, subtotal: it.subtotal,
+      baseAmount: it.baseAmount, totalTax: it.totalTax || 0,
+      cgst: it.cgst || 0, sgst: it.sgst || 0, unit: it.unit,
+    })),
+    subtotal, totalTax, grandTotal,
+    hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,
+    paymentType,
+    downPayment: parseFloat(downPayment) || 0,
+    emiMonths: parseInt(emiMonths) || 0,
+    emiAmount,
+    emiStartDate, financerName, paymentRef, balanceDue,
+    deliveryType,
+    deliveryDate: deliveryType === DELIVERY_TYPES.SCHEDULED ? deliveryDate : '',
+    isDelivered: deliveryType === DELIVERY_TYPES.IMMEDIATE,
+    bulkPrice: bulkPrice || 0,
+    notes,
+  });
+
   const handleSave = async () => {
-    setError('');
-    if (!companyId) { setError('Please select a company / firm'); return; }
-    if (!selectedCustomer) { setError('Please select a customer'); return; }
-    if (items.some(it => !it.productId)) { setError('Please select a product for every item'); return; }
-    if (items.some(it => (parseFloat(it.qty) || 0) <= 0)) { setError('Quantity must be greater than 0'); return; }
-    if (paymentType === PAYMENT_TYPES.EMI && (!downPayment || !emiMonths || !emiStartDate)) {
-      setError('EMI requires down payment, number of months, and start date'); return;
-    }
-    if ((paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (!downPayment || !financerName || !paymentRef)) {
-      setError('Finance / Bank Transfer requires down payment, financer name, and payment reference'); return;
-    }
-    if (deliveryType === DELIVERY_TYPES.SCHEDULED && !deliveryDate) {
-      setError('Please set a delivery date for scheduled delivery'); return;
-    }
+  setError('');
+  if (!companyId) { setError('Please select a company / firm'); return; }
+  if (!selectedCustomer) { setError('Please select a customer'); return; }
+  if (items.some(it => !it.productId)) { setError('Please select a product for every item'); return; }
+  if (items.some(it => (parseFloat(it.qty) || 0) <= 0)) { setError('Quantity must be greater than 0'); return; }
+  if (paymentType === PAYMENT_TYPES.EMI && (!downPayment || !emiMonths || !emiStartDate)) {
+    setError('EMI requires down payment, number of months, and start date'); return;
+  }
+  if ((paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (!downPayment || !financerName || !paymentRef)) {
+    setError('Finance / Bank Transfer requires down payment, financer name, and payment reference'); return;
+  }
+  if (deliveryType === DELIVERY_TYPES.SCHEDULED && !deliveryDate) {
+    setError('Please set a delivery date for scheduled delivery'); return;
+  }
 
-    setSaving(true);
-    try {
-      const company = COMPANIES[companyId];
-      let invoiceNumber;
+  setSaving(true);
+  try {
+    const company = COMPANIES[companyId];
+    let invoiceNumber;
 
-      if (isEdit) {
-        const existingSnap = await getDoc(doc(db, 'sales', id));
-        invoiceNumber = existingSnap.data().invoiceNumber;
-      } else {
-        const countSnap = await getCountFromServer(collection(db, 'sales'));
-        invoiceNumber = generateInvoiceNumber(company?.code || 'INV', countSnap.data().count);
-      }
+    if (isEdit) {
+      const existingSnap = await getDoc(doc(db, 'sales', id));
+      const existingData = existingSnap.data();
+      invoiceNumber = existingData.invoiceNumber;
+      const prevPaymentType = existingData.paymentType;
 
-      const saleData = {
-        invoiceNumber, invoiceType, companyId,
-        companyName: company?.name,
-        customerId: selectedCustomer.id,
-        customerName: selectedCustomer.name,
-        customerPhone: selectedCustomer.phone,
-        salesperson, saleDate,
-        items: itemsWithCalc.map(it => ({
-          productId: it.productId, productName: it.productName,
-          qty: parseFloat(it.qty), price: parseFloat(it.price),
-          gstRate: it.gstRate, subtotal: it.subtotal,
-          baseAmount: it.baseAmount, totalTax: it.totalTax || 0,
-          cgst: it.cgst || 0, sgst: it.sgst || 0, unit: it.unit,
-        })),
-        subtotal, totalTax, grandTotal,
-        hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,
-        paymentType,
-        downPayment: parseFloat(downPayment) || 0,
-        emiMonths: parseInt(emiMonths) || 0,
-        emiAmount,
-        emiStartDate, financerName, paymentRef, balanceDue,
-        deliveryType,
-        deliveryDate: deliveryType === DELIVERY_TYPES.SCHEDULED ? deliveryDate : '',
-        isDelivered: deliveryType === DELIVERY_TYPES.IMMEDIATE,
-        bulkPrice: bulkPrice || 0,
-        notes,
-      };
+      // ── Determine EMI installments ──
+      let emiInstallments;
+      if (paymentType === PAYMENT_TYPES.EMI) {
+        const prevInstallments = existingData.emiInstallments || [];
+        const configChanged =
+          parseInt(emiMonths) !== (existingData.emiMonths || 0) ||
+          emiStartDate !== (existingData.emiStartDate || '') ||
+          Math.abs(emiAmount - (existingData.emiAmount || 0)) > 0.01;
 
-      if (isEdit) {
-        const existingSnap = await getDoc(doc(db, 'sales', id));
-        const existingData = existingSnap.data();
-        const prevPaymentType = existingData.paymentType;
-
-        // ── Determine EMI installments ──
-        let emiInstallments;
-        if (paymentType === PAYMENT_TYPES.EMI) {
-          const prevInstallments = existingData.emiInstallments || [];
-          const configChanged =
-            parseInt(emiMonths) !== (existingData.emiMonths || 0) ||
-            emiStartDate !== (existingData.emiStartDate || '') ||
-            Math.abs(emiAmount - (existingData.emiAmount || 0)) > 0.01;
-
-          if (prevPaymentType === PAYMENT_TYPES.EMI && !configChanged && prevInstallments.length > 0) {
-            // Keep existing (preserves payment history)
-            emiInstallments = prevInstallments;
-          } else {
-            // Regenerate — config changed or switching to EMI
-            emiInstallments = buildEmiInstallments();
-          }
+        if (prevPaymentType === PAYMENT_TYPES.EMI && !configChanged && prevInstallments.length > 0) {
+          emiInstallments = prevInstallments;
         } else {
-          emiInstallments = [];
+          emiInstallments = buildEmiInstallments();
         }
-
-        // ── Reset sale-level payments if payment type changed ──
-        const paymentReset = prevPaymentType !== paymentType
-          ? {
-              salePayments: [],
-              totalPaidAmount: 0,
-              paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
-            }
-          : {};
-
-        await updateDoc(doc(db, 'sales', id), {
-          ...saleData,
-          emiInstallments,
-          ...paymentReset,
-          updatedAt: serverTimestamp(),
-        });
-        toast.success('Sale updated!');
       } else {
-        const emiInstallments = buildEmiInstallments();
-
-        await addDoc(collection(db, 'sales'), {
-          ...saleData,
-          emiInstallments,
-          salePayments: [],
-          totalPaidAmount: 0,
-          paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
-          createdAt: serverTimestamp(),
-        });
-
-        // Deduct inventory
-        for (const it of items) {
-          if (!it.productId) continue;
-          const invQ = query(collection(db, 'inventory'), where('productId', '==', it.productId));
-          const invSnap = await getDocs(invQ);
-          if (!invSnap.empty) {
-            const invDoc = invSnap.docs[0];
-            await updateDoc(doc(db, 'inventory', invDoc.id), {
-              stock: Math.max(0, (invDoc.data().stock || 0) - (parseFloat(it.qty) || 0)),
-              soldQty: (invDoc.data().soldQty || 0) + (parseFloat(it.qty) || 0),
-              updatedAt: serverTimestamp(),
-            });
-          }
-        }
-        toast.success('Sale recorded successfully!');
+        emiInstallments = [];
       }
-      navigate('/sales');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
+
+      // ── Reset sale-level payments if payment type changed ──
+      const paymentReset = prevPaymentType !== paymentType
+        ? {
+            salePayments: [],
+            totalPaidAmount: 0,
+            paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
+          }
+        : {};
+
+      // ── Build saleData (same as before) ──
+      const saleData = buildSaleData(invoiceNumber, company);
+
+      await updateDoc(doc(db, 'sales', id), {
+        ...saleData,
+        emiInstallments,
+        ...paymentReset,
+        updatedAt: serverTimestamp(),
+      });
+
+      // ── FIX: Reconcile inventory using pure delta (newQty − oldQty) ──
+      // existingData.items = what was saved before this edit
+      // itemsWithCalc        = what the user is saving now
+      await applyInventoryDeltas(
+        db,
+        existingData.items || [],   // old items (from Firestore)
+        itemsWithCalc,              // new items (current form state)
+        'sale'
+      );
+
+      toast.success('Sale updated!');
+    } else {
+      invoiceNumber = generateInvoiceNumber(
+        company?.code || 'INV',
+        (await getCountFromServer(collection(db, 'sales'))).data().count
+      );
+
+      const saleData = buildSaleData(invoiceNumber, company);
+      const emiInstallments = buildEmiInstallments();
+
+      await addDoc(collection(db, 'sales'), {
+        ...saleData,
+        emiInstallments,
+        salePayments: [],
+        totalPaidAmount: 0,
+        paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
+        createdAt: serverTimestamp(),
+      });
+
+      // ── Deduct inventory for new sale ──
+      await applyNewSaleInventory(db, itemsWithCalc);
+
+      toast.success('Sale recorded successfully!');
     }
-  };
+
+    navigate('/sales');
+  } catch (e) {
+    setError(e.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   if (loading) return <Box display="flex" justifyContent="center" pt={8}><CircularProgress /></Box>;
 
@@ -483,7 +489,7 @@ const CreateSale = () => {
   const withGST = invoiceType === 'gst';
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 900, mx: 'auto' }}>
+    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1200, mx: 'auto' }}>
       <Box display="flex" alignItems="center" gap={2} mb={3}>
         <IconButton onClick={() => navigate('/sales')}><ArrowBack /></IconButton>
         <Box>

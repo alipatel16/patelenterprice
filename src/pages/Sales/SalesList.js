@@ -9,7 +9,8 @@ import {
 import { Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getCountFromServer, where,
+  deleteDoc, doc, getDoc,
+  getCountFromServer, where,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -17,6 +18,8 @@ import { toast } from 'react-toastify';
 import { PAYMENT_LABELS } from '../../constants';
 import { formatCurrency, formatDate, getPaymentStatusColor } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
+
+import { reverseSaleInventory } from '../../utils/inventoryUtils';
 
 const PAGE_SIZE = 10;
 
@@ -38,6 +41,7 @@ const SalesList = () => {
   const [cursorMap, setCursorMap] = useState({});
   const [deleteId, setDeleteId] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const searchTimer = useRef(null);
 
   const handleSearch = val => {
@@ -102,14 +106,23 @@ const SalesList = () => {
 
     run();
     return () => { active = false; };
-  }, [db, page, paymentFilter, invoiceFilter, deliveryFilter, debouncedSearch]);
+  }, [db, page, paymentFilter, invoiceFilter, deliveryFilter, debouncedSearch, refreshKey]);
 
   const handleDelete = async () => {
-    await deleteDoc(doc(db, 'sales', deleteId));
-    toast.success('Sale deleted');
-    setDeleteId(null);
-    setCursorMap({});
-    setPage(0);
+    try {
+      const saleSnap = await getDoc(doc(db, 'sales', deleteId));
+      if (saleSnap.exists()) {
+        await reverseSaleInventory(db, saleSnap.data().items || []);
+      }
+      await deleteDoc(doc(db, 'sales', deleteId));
+      toast.success('Sale deleted & inventory restored');
+      setDeleteId(null);
+      setCursorMap({});
+      setPage(0);
+      setRefreshKey(k => k + 1); // ← this guarantees re-fetch even if already on page 0
+    } catch (e) {
+      toast.error('Failed to delete sale: ' + e.message);
+    }
   };
 
   const DeliveryChip = ({ type }) => {
@@ -137,45 +150,38 @@ const SalesList = () => {
       </Box>
 
       <Card sx={{ mb: 2 }}>
-        <Box sx={{ p: 2, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Box sx={{ p: 2 }}>
           <TextField
-            placeholder="Search invoice, customer..." value={search}
-            onChange={e => handleSearch(e.target.value)} size="small" sx={{ flex: 1, minWidth: 200 }}
+            fullWidth placeholder="Search invoice, customer, phone..."
+            value={search} onChange={e => handleSearch(e.target.value)} size="small"
             InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }}
           />
-          {showFilters && (
-            <>
-              <FormControl size="small" sx={{ minWidth: 170 }}>
-                <InputLabel>Payment</InputLabel>
-                <Select value={paymentFilter} onChange={handleFilterChange(setPaymentFilter)} label="Payment">
-                  <MenuItem value="all">All Payments</MenuItem>
-                  {Object.entries(PAYMENT_LABELS).map(([v, l]) => <MenuItem key={v} value={v}>{l}</MenuItem>)}
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: 150 }}>
-                <InputLabel>Invoice Type</InputLabel>
-                <Select value={invoiceFilter} onChange={handleFilterChange(setInvoiceFilter)} label="Invoice Type">
-                  <MenuItem value="all">All</MenuItem>
-                  <MenuItem value="gst">GST Invoice</MenuItem>
-                  <MenuItem value="non_gst">Non-GST</MenuItem>
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: 150 }}>
-                <InputLabel>Delivery</InputLabel>
-                <Select value={deliveryFilter} onChange={handleFilterChange(setDeliveryFilter)} label="Delivery">
-                  <MenuItem value="all">All</MenuItem>
-                  <MenuItem value="immediate">Delivered</MenuItem>
-                  <MenuItem value="scheduled">Scheduled</MenuItem>
-                </Select>
-              </FormControl>
-            </>
-          )}
         </Box>
-        {activeFilters > 0 && (
-          <Box sx={{ px: 2, pb: 1.5, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            {paymentFilter !== 'all' && <Chip label={PAYMENT_LABELS[paymentFilter]} onDelete={() => setPaymentFilter('all')} color={getPaymentStatusColor(paymentFilter)} size="small" />}
-            {invoiceFilter !== 'all' && <Chip label={invoiceFilter === 'gst' ? 'GST Invoice' : 'Non-GST'} onDelete={() => setInvoiceFilter('all')} size="small" />}
-            {deliveryFilter !== 'all' && <Chip label={deliveryFilter === 'immediate' ? 'Delivered' : 'Scheduled'} onDelete={() => setDeliveryFilter('all')} size="small" />}
+        {showFilters && (
+          <Box sx={{ px: 2, pb: 2, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Payment Type</InputLabel>
+              <Select value={paymentFilter} onChange={handleFilterChange(setPaymentFilter)} label="Payment Type">
+                <MenuItem value="all">All</MenuItem>
+                {Object.entries(PAYMENT_LABELS).map(([k, v]) => <MenuItem key={k} value={k}>{v}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 130 }}>
+              <InputLabel>Invoice Type</InputLabel>
+              <Select value={invoiceFilter} onChange={handleFilterChange(setInvoiceFilter)} label="Invoice Type">
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="gst">GST</MenuItem>
+                <MenuItem value="non_gst">Non-GST</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 130 }}>
+              <InputLabel>Delivery</InputLabel>
+              <Select value={deliveryFilter} onChange={handleFilterChange(setDeliveryFilter)} label="Delivery">
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="immediate">Immediate</MenuItem>
+                <MenuItem value="scheduled">Scheduled</MenuItem>
+              </Select>
+            </FormControl>
           </Box>
         )}
       </Card>
@@ -185,12 +191,12 @@ const SalesList = () => {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Invoice</TableCell>
                 <TableCell>Customer</TableCell>
+                {!isMobile && <TableCell>Invoice #</TableCell>}
                 {!isMobile && <TableCell>Date</TableCell>}
-                <TableCell>Total</TableCell>
-                <TableCell>Payment</TableCell>
-                <TableCell>Delivery</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Status</TableCell>
+                {!isMobile && <TableCell>Delivery</TableCell>}
                 {!isMobile && <TableCell>Type</TableCell>}
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -198,34 +204,29 @@ const SalesList = () => {
             <TableBody>
               {loading
                 ? Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: isMobile ? 6 : 8 }).map((_, j) => (
+                    <TableRow key={i}>{Array.from({ length: isMobile ? 5 : 8 }).map((_, j) => (
                       <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
                     ))}</TableRow>
                   ))
                 : rows.length === 0
-                  ? <TableRow>
-                      <TableCell colSpan={isMobile ? 6 : 8} align="center" sx={{ py: 4 }}>
-                        <Typography color="text.secondary">No sales found</Typography>
-                        <Button variant="outlined" sx={{ mt: 1 }} onClick={() => navigate('/sales/new')}>Create First Sale</Button>
-                      </TableCell>
-                    </TableRow>
+                  ? <TableRow><TableCell colSpan={isMobile ? 5 : 8} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No sales found</Typography></TableCell></TableRow>
                   : rows.map(row => (
-                      <TableRow key={row.id} hover sx={{ cursor: "pointer" }} onClick={() => navigate(`/sales/${row.id}`)}>
+                      <TableRow key={row.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/sales/${row.id}`)}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight={700} color="primary">{row.invoiceNumber}</Typography>
+                          <Typography variant="body2" fontWeight={600}>{row.customerName || '-'}</Typography>
                           {isMobile && <Typography variant="caption" color="text.secondary">{formatDate(row.saleDate)}</Typography>}
                         </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={600}>{row.customerName}</Typography>
-                          {!isMobile && <Typography variant="caption" color="text.secondary">{row.customerPhone}</Typography>}
-                        </TableCell>
+                        {!isMobile && <TableCell><Typography variant="body2">{row.invoiceNumber || '-'}</Typography></TableCell>}
                         {!isMobile && <TableCell>{formatDate(row.saleDate)}</TableCell>}
-                        <TableCell><Typography fontWeight={700} color="success.main">{formatCurrency(row.grandTotal)}</Typography></TableCell>
+                        <TableCell><Typography fontWeight={600} color="success.main">{formatCurrency(row.grandTotal)}</Typography></TableCell>
                         <TableCell>
-                          <Chip label={PAYMENT_LABELS[row.paymentType] || row.paymentType} size="small"
-                            color={getPaymentStatusColor(row.paymentType)} sx={{ fontSize: 10, height: 22 }} />
+                          <Chip
+                            label={row.paymentStatus === 'paid' ? 'Paid' : row.paymentStatus === 'partial' ? 'Partial' : 'Unpaid'}
+                            color={getPaymentStatusColor(row.paymentStatus)}
+                            size="small" sx={{ fontSize: 10 }}
+                          />
                         </TableCell>
-                        <TableCell><DeliveryChip type={row.deliveryType} /></TableCell>
+                        {!isMobile && <TableCell><DeliveryChip type={row.deliveryType} /></TableCell>}
                         {!isMobile && (
                           <TableCell>
                             <Chip label={row.invoiceType === 'gst' ? 'GST' : 'Non-GST'} size="small" variant="outlined" sx={{ fontSize: 10 }} />
@@ -257,7 +258,7 @@ const SalesList = () => {
 
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Sale?</DialogTitle>
-        <DialogContent><Typography>This will not restore inventory. Continue?</Typography></DialogContent>
+        <DialogContent><Typography>This will delete the sale and restore the inventory quantities. Continue?</Typography></DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteId(null)}>Cancel</Button>
           <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>
