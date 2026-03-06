@@ -12,11 +12,11 @@ import {
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
   addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp,
-  getCountFromServer, where,
+  getCountFromServer,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
-import { formatCurrency, formatDate, calculateGST, debounce } from '../../utils';
+import { formatCurrency, formatDate, debounce } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 import {
   applyInventoryDeltas,

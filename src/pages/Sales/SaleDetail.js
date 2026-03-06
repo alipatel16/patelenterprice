@@ -4,7 +4,7 @@ import {
   Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead,
   TableRow, IconButton, Tooltip, Dialog, DialogTitle, DialogContent,
   DialogActions, TextField, MenuItem, Alert, CircularProgress, Stack,
-  LinearProgress, Paper, Badge,
+  LinearProgress, Badge,
 } from '@mui/material';
 import {
   ArrowBack, Edit, Payment, CalendarMonth, CheckCircle,
