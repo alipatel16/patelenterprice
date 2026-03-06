@@ -19,6 +19,9 @@ import SaleDetail from './pages/Sales/SaleDetail';
 import DeliveryTracking from './pages/Sales/DeliveryTracking';
 import ExchangeTracking from './pages/Sales/ExchangeTracking';
 import EmiDues from './pages/Sales/EmiDues';
+import QuotationsList from './pages/Quotations/QuotationsList';
+import CreateQuotation from './pages/Quotations/CreateQuotation';
+import QuotationDetail from './pages/Quotations/QuotationDetail';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -57,6 +60,10 @@ const AppContent = () => {
           <Route path="delivery-tracking" element={<DeliveryTracking />} />
           <Route path="exchange-tracking" element={<ExchangeTracking />} />
           <Route path="emi-dues" element={<EmiDues />} />
+          <Route path="quotations" element={<QuotationsList />} />
+          <Route path="quotations/new" element={<CreateQuotation />} />
+          <Route path="quotations/edit/:id" element={<CreateQuotation />} />
+          <Route path="quotations/:id" element={<QuotationDetail />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

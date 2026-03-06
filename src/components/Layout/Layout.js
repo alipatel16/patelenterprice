@@ -10,7 +10,7 @@ import {
   Menu as MenuIcon, Dashboard, People, Inventory2,
   ShoppingCart, PointOfSale, Storefront, Logout,
   AccountCircle, ElectricBolt, Chair, ChevronLeft,
-  LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore,
+  LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore, Description
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { COMPANIES } from '../../constants';
@@ -27,6 +27,7 @@ const NAV_ITEMS = [
   { path: '/delivery-tracking', label: 'Delivery Tracking', icon: <LocalShipping /> },
   { path: '/exchange-tracking', label: 'Exchange Tracking', icon: <SwapHoriz /> },
   { path: '/emi-dues', label: 'EMI Dues', icon: <CreditScore /> },
+  { path: '/quotations', label: 'Quotations', icon: <Description /> },
 ];
 
 const Layout = () => {
