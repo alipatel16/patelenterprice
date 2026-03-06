@@ -11,7 +11,7 @@ import {
   ShoppingCart, PointOfSale, Storefront, Logout,
   AccountCircle, ElectricBolt, Chair, ChevronLeft,
   LocalShipping, AdminPanelSettings, SwapHoriz, CreditScore,
-  Description, CardGiftcard,
+  Description, CardGiftcard, BugReport,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { COMPANIES } from '../../constants';
@@ -19,17 +19,18 @@ import { COMPANIES } from '../../constants';
 const DRAWER_WIDTH = 240;
 
 const NAV_ITEMS = [
-  { path: '/dashboard', label: 'Dashboard', icon: <Dashboard /> },
-  { path: '/customers', label: 'Customers', icon: <People /> },
-  { path: '/products', label: 'Products', icon: <Storefront /> },
-  { path: '/purchases', label: 'Purchases', icon: <ShoppingCart /> },
-  { path: '/inventory', label: 'Inventory', icon: <Inventory2 /> },
-  { path: '/sales', label: 'Sales', icon: <PointOfSale /> },
-  { path: '/delivery-tracking', label: 'Delivery Tracking', icon: <LocalShipping /> },
-  { path: '/exchange-tracking', label: 'Exchange Tracking', icon: <SwapHoriz /> },
-  { path: '/emi-dues', label: 'EMI Dues', icon: <CreditScore /> },
-  { path: '/quotations', label: 'Quotations', icon: <Description /> },
-  { path: '/gift-invoices', label: 'Gift Invoices', icon: <CardGiftcard /> },
+  { path: '/dashboard',          label: 'Dashboard',         icon: <Dashboard /> },
+  { path: '/customers',          label: 'Customers',         icon: <People /> },
+  { path: '/products',           label: 'Products',          icon: <Storefront /> },
+  { path: '/purchases',          label: 'Purchases',         icon: <ShoppingCart /> },
+  { path: '/inventory',          label: 'Inventory',         icon: <Inventory2 /> },
+  { path: '/sales',              label: 'Sales',             icon: <PointOfSale /> },
+  { path: '/delivery-tracking',  label: 'Delivery Tracking', icon: <LocalShipping /> },
+  { path: '/exchange-tracking',  label: 'Exchange Tracking', icon: <SwapHoriz /> },
+  { path: '/emi-dues',           label: 'EMI Dues',          icon: <CreditScore /> },
+  { path: '/quotations',         label: 'Quotations',        icon: <Description /> },
+  { path: '/gift-invoices',      label: 'Gift Invoices',     icon: <CardGiftcard /> },
+  { path: '/complaints',         label: 'Complaints',        icon: <BugReport /> },
 ];
 
 const Layout = () => {
@@ -47,6 +48,20 @@ const Layout = () => {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  // Determine if a nav item is active, accounting for sub-routes
+  const isNavActive = (path) => {
+    if (path === '/sales') {
+      return location.pathname === '/sales' || location.pathname.startsWith('/sales/');
+    }
+    if (path === '/gift-invoices') {
+      return location.pathname.startsWith('/gift-invoices') || location.pathname.startsWith('/gift-sets');
+    }
+    if (path === '/complaints') {
+      return location.pathname.startsWith('/complaints') || location.pathname.startsWith('/brand-hierarchy');
+    }
+    return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
   const drawerContent = (
@@ -92,12 +107,7 @@ const Layout = () => {
       {/* Nav Items */}
       <List sx={{ flex: 1, py: 1, overflowY: 'auto' }}>
         {NAV_ITEMS.map(({ path, label, icon }) => {
-          const salesActive = path === '/sales' && (location.pathname === '/sales' || location.pathname.startsWith('/sales/'));
-          const giftActive = path === '/gift-invoices' && (location.pathname === '/gift-invoices' || location.pathname.startsWith('/gift-invoices/') || location.pathname.startsWith('/gift-sets'));
-          const defaultActive = path !== '/sales' && path !== '/gift-invoices' &&
-            (location.pathname === path || location.pathname.startsWith(path + '/'));
-          const isActive = salesActive || giftActive || defaultActive;
-
+          const isActive = isNavActive(path);
           return (
             <ListItem key={path} disablePadding sx={{ px: 1, mb: 0.5 }}>
               <ListItemButton
@@ -135,7 +145,9 @@ const Layout = () => {
           <Chip
             label={userProfile?.role}
             size="small"
-            icon={userProfile?.role === 'admin' ? <AdminPanelSettings sx={{ fontSize: '12px !important' }} /> : undefined}
+            icon={userProfile?.role === 'admin'
+              ? <AdminPanelSettings sx={{ fontSize: '12px !important' }} />
+              : undefined}
             color={userProfile?.role === 'admin' ? 'primary' : 'default'}
             sx={{ height: 18, fontSize: 10, mt: 0.25 }}
           />
@@ -169,7 +181,7 @@ const Layout = () => {
         </AppBar>
       )}
 
-      {/* Sidebar Drawer */}
+      {/* Sidebar */}
       {isMobile ? (
         <Drawer
           variant="temporary" open={mobileOpen}
@@ -201,7 +213,7 @@ const Layout = () => {
         <Outlet />
       </Box>
 
-      {/* Desktop user menu */}
+      {/* Mobile user menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
         <MenuItem disabled>
           <Typography variant="body2">{userProfile?.name}</Typography>

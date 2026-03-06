@@ -22,13 +22,18 @@ import EmiDues from './pages/Sales/EmiDues';
 import QuotationsList from './pages/Quotations/QuotationsList';
 import CreateQuotation from './pages/Quotations/CreateQuotation';
 import QuotationDetail from './pages/Quotations/QuotationDetail';
-
-// ── Gift Module ──
 import GiftInvoiceList from './pages/Gifts/GiftInvoiceList';
 import CreateGiftInvoice from './pages/Gifts/CreateGiftInvoice';
 import GiftInvoiceDetail from './pages/Gifts/GiftInvoiceDetail';
 import GiftSetList from './pages/Gifts/GiftSetList';
 import GiftSetForm from './pages/Gifts/GiftSetForm';
+
+// ── Complaint Module ──
+import ComplaintList from './pages/Complaints/ComplaintList';
+import CreateComplaint from './pages/Complaints/CreateComplaint';
+import ComplaintDetail from './pages/Complaints/ComplaintDetail';
+import BrandHierarchyList from './pages/Complaints/BrandHierarchyList';
+import BrandHierarchyForm from './pages/Complaints/BrandHierarchyForm';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -76,16 +81,23 @@ const AppContent = () => {
           <Route path="quotations/edit/:id" element={<CreateQuotation />} />
           <Route path="quotations/:id" element={<QuotationDetail />} />
 
-          {/* Gift Invoices — specific routes BEFORE :id param */}
+          {/* Gifts */}
           <Route path="gift-invoices" element={<GiftInvoiceList />} />
           <Route path="gift-invoices/new" element={<CreateGiftInvoice />} />
           <Route path="gift-invoices/edit/:id" element={<CreateGiftInvoice />} />
           <Route path="gift-invoices/:id" element={<GiftInvoiceDetail />} />
-
-          {/* Gift Sets */}
           <Route path="gift-sets" element={<GiftSetList />} />
           <Route path="gift-sets/new" element={<GiftSetForm />} />
           <Route path="gift-sets/edit/:id" element={<GiftSetForm />} />
+
+          {/* Complaints — specific before :id */}
+          <Route path="complaints" element={<ComplaintList />} />
+          <Route path="complaints/new" element={<CreateComplaint />} />
+          <Route path="complaints/edit/:id" element={<CreateComplaint />} />
+          <Route path="complaints/:id" element={<ComplaintDetail />} />
+          <Route path="brand-hierarchy" element={<BrandHierarchyList />} />
+          <Route path="brand-hierarchy/new" element={<BrandHierarchyForm />} />
+          <Route path="brand-hierarchy/edit/:id" element={<BrandHierarchyForm />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
