@@ -15,9 +15,10 @@ export const ALL_PAGES = [
   { path: '/gift-sets',         label: 'Gift Sets' },
   { path: '/complaints',        label: 'Complaints' },
   { path: '/brand-hierarchy',   label: 'Brand Hierarchy' },
-  { path: '/employees',         label: 'Employees' },
-  { path: '/attendance',        label: 'Attendance Tracker' },
+  { path: '/employees',           label: 'Employees' },
+  { path: '/attendance',          label: 'Attendance Tracker' },
   { path: '/checklist-templates', label: 'Checklist Templates' },
+  { path: '/my-attendance',       label: 'My Attendance' },
 ];
 
 /** Geofence: store → list of allowed centre-points */

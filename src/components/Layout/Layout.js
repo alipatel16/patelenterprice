@@ -102,9 +102,12 @@ const Layout = () => {
   const isVisible = (item) => {
     if (isAdmin) return !item.employeeOnly;
     if (item.adminOnly) return false;
+    // employeeOnly items (e.g. My Attendance) are always visible to employees
+    // regardless of the allowed-pages restriction — they are core work tools
+    if (item.employeeOnly) return true;
     const allowed = userProfile?.allowedPages;
     if (allowed && allowed.length > 0) return allowed.includes(item.path);
-    return !item.adminOnly;
+    return true;
   };
 
   const toggleGroup = (label) =>
