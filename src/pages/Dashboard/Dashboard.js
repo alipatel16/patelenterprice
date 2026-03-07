@@ -7,7 +7,7 @@ import {
 import {
   TrendingUp, People, Inventory2, PointOfSale,
   ShoppingCart, Add, ArrowUpward, ArrowDownward,
-  AttachMoney, Pending, LocalShipping,
+  AttachMoney, Pending, LocalShipping, Receipt,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -84,6 +84,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState({
     totalSales: 0, totalCustomers: 0, totalProducts: 0,
     totalPurchases: 0, pendingSales: 0, todaySales: 0,
+    invoiceCount: 0,                                      // ← new
   });
   const [chartData, setChartData] = useState([]);
   const [customStart, setCustomStart] = useState(dayjs().subtract(7, 'day').format('YYYY-MM-DD'));
@@ -97,9 +98,9 @@ const Dashboard = () => {
 
   const getDateRange = () => {
     const now = dayjs();
-    if (range === 'daily') return { start: now.startOf('day'), end: now.endOf('day') };
+    if (range === 'daily')   return { start: now.startOf('day'),   end: now.endOf('day')   };
     if (range === 'monthly') return { start: now.startOf('month'), end: now.endOf('month') };
-    if (range === 'custom') return { start: dayjs(customStart), end: dayjs(customEnd) };
+    if (range === 'custom')  return { start: dayjs(customStart),   end: dayjs(customEnd)   };
     return { start: now.startOf('month'), end: now.endOf('month') };
   };
 
@@ -108,7 +109,7 @@ const Dashboard = () => {
     try {
       const { start, end } = getDateRange();
       const startTs = Timestamp.fromDate(start.toDate());
-      const endTs = Timestamp.fromDate(end.toDate());
+      const endTs   = Timestamp.fromDate(end.toDate());
 
       const [custSnap, prodSnap, salesSnap, purchaseSnap, pendingSnap] = await Promise.all([
         getCountFromServer(collection(db, 'customers')),
@@ -118,12 +119,13 @@ const Dashboard = () => {
         getCountFromServer(query(collection(db, 'sales'), where('paymentType', '==', 'pending_payment'))),
       ]);
 
-      const totalSales = salesSnap.docs.reduce((sum, d) => sum + (d.data().grandTotal || 0), 0);
+      const totalSales   = salesSnap.docs.reduce((sum, d) => sum + (d.data().grandTotal || 0), 0);
+      const invoiceCount = salesSnap.size;               // ← count of invoices in selected range
 
       // Today's sales
       const todayStart = Timestamp.fromDate(dayjs().startOf('day').toDate());
-      const todayEnd = Timestamp.fromDate(dayjs().endOf('day').toDate());
-      const todaySnap = await getDocs(query(
+      const todayEnd   = Timestamp.fromDate(dayjs().endOf('day').toDate());
+      const todaySnap  = await getDocs(query(
         collection(db, 'sales'),
         where('createdAt', '>=', todayStart),
         where('createdAt', '<=', todayEnd),
@@ -132,10 +134,11 @@ const Dashboard = () => {
 
       setStats({
         totalSales,
+        invoiceCount,                                     // ← new
         totalCustomers: custSnap.data().count,
-        totalProducts: prodSnap.data().count,
+        totalProducts:  prodSnap.data().count,
         totalPurchases: purchaseSnap.data().count,
-        pendingSales: pendingSnap.data().count,
+        pendingSales:   pendingSnap.data().count,
         todaySales,
       });
     } catch (err) {
@@ -150,10 +153,10 @@ const Dashboard = () => {
       const days = [];
       const today = dayjs();
       for (let i = 6; i >= 0; i--) {
-        const day = today.subtract(i, 'day');
+        const day   = today.subtract(i, 'day');
         const start = Timestamp.fromDate(day.startOf('day').toDate());
-        const end = Timestamp.fromDate(day.endOf('day').toDate());
-        const snap = await getDocs(query(
+        const end   = Timestamp.fromDate(day.endOf('day').toDate());
+        const snap  = await getDocs(query(
           collection(db, 'sales'),
           where('createdAt', '>=', start),
           where('createdAt', '<=', end),
@@ -194,7 +197,7 @@ const Dashboard = () => {
         {range === 'custom' && (
           <>
             <TextField type="date" size="small" value={customStart} onChange={e => setCustomStart(e.target.value)} label="From" InputLabelProps={{ shrink: true }} sx={{ width: 150 }} />
-            <TextField type="date" size="small" value={customEnd} onChange={e => setCustomEnd(e.target.value)} label="To" InputLabelProps={{ shrink: true }} sx={{ width: 150 }} />
+            <TextField type="date" size="small" value={customEnd}   onChange={e => setCustomEnd(e.target.value)}   label="To"   InputLabelProps={{ shrink: true }} sx={{ width: 150 }} />
           </>
         )}
       </Box>
@@ -219,8 +222,17 @@ const Dashboard = () => {
         <Grid item xs={12} sm={6} md={3}>
           <StatCard title="Purchases" value={stats.totalPurchases} icon={<LocalShipping />} color="primary" loading={loading} />
         </Grid>
+
+        {/* ── Invoices Raised ── */}
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Active Sales" value={stats.totalSales > 0 ? '↑' : '-'} subtitle="this period" icon={<PointOfSale />} color="success" loading={loading} />
+          <StatCard
+            title="Invoices Raised"
+            value={stats.invoiceCount}
+            subtitle="in selected period"
+            icon={<Receipt />}
+            color="success"
+            loading={loading}
+          />
         </Grid>
       </Grid>
 
@@ -234,9 +246,9 @@ const Dashboard = () => {
                 <BarChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}k`} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
                   <Tooltip formatter={v => formatCurrency(v)} />
-                  <Bar dataKey="sales" fill={theme.palette.primary.main} radius={[4,4,0,0]} name="Sales" />
+                  <Bar dataKey="sales" fill={theme.palette.primary.main} radius={[4, 4, 0, 0]} name="Sales" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -249,19 +261,19 @@ const Dashboard = () => {
               <Typography variant="subtitle1" fontWeight={600} mb={2}>Quick Actions</Typography>
               <Grid container spacing={1.5}>
                 <Grid item xs={12}>
-                  <QuickAction label="New Sale" icon={<Add />} color="primary" onClick={() => navigate('/sales/new')} />
+                  <QuickAction label="New Sale"        icon={<Add />}        color="primary"   onClick={() => navigate('/sales/new')}  />
                 </Grid>
                 <Grid item xs={12}>
-                  <QuickAction label="Add Customer" icon={<People />} color="info" onClick={() => navigate('/customers')} />
+                  <QuickAction label="Add Customer"    icon={<People />}     color="info"      onClick={() => navigate('/customers')}  />
                 </Grid>
                 <Grid item xs={12}>
-                  <QuickAction label="Add Product" icon={<Inventory2 />} color="secondary" onClick={() => navigate('/products')} />
+                  <QuickAction label="Add Product"     icon={<Inventory2 />} color="secondary" onClick={() => navigate('/products')}   />
                 </Grid>
                 <Grid item xs={12}>
-                  <QuickAction label="Record Purchase" icon={<ShoppingCart />} color="warning" onClick={() => navigate('/purchases')} />
+                  <QuickAction label="Record Purchase" icon={<ShoppingCart />} color="warning" onClick={() => navigate('/purchases')}  />
                 </Grid>
                 <Grid item xs={12}>
-                  <QuickAction label="View Inventory" icon={<Inventory2 />} color="success" onClick={() => navigate('/inventory')} />
+                  <QuickAction label="View Inventory"  icon={<Inventory2 />} color="success"   onClick={() => navigate('/inventory')}  />
                 </Grid>
               </Grid>
             </CardContent>
