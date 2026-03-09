@@ -60,7 +60,7 @@ const NAV_GROUPS = [
       { path: '/gift-invoices',      label: 'Gift Invoices',     icon: <CardGiftcard />,   adminOnly: false },
       { path: '/gift-sets',          label: 'Gift Sets',         icon: <CardGiftcard />,   adminOnly: false },
       { path: '/complaints',         label: 'Complaints',        icon: <BugReport />,      adminOnly: false },
-      { path: '/brand-hierarchy',    label: 'Brand Hierarchy',   icon: <AccountTree />,    adminOnly: true  },
+      { path: '/brand-hierarchy',    label: 'Brand Hierarchy',   icon: <AccountTree />,    adminOnly: false  },
     ],
   },
   {
