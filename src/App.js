@@ -46,6 +46,7 @@ import EmployeeDashboard from './pages/Employees/EmployeeDashboard';
 import ChecklistAdminView from './pages/Employees/ChecklistAdminView';
 import PenaltySettings from './pages/Employees/PenaltySettings';
 import SalaryReport from './pages/Employees/SalaryReport';
+import EmployeeSalesReport from './pages/Sales/EmployeeSalesReport';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -85,6 +86,7 @@ const AppContent = () => {
           <Route path="delivery-tracking" element={<DeliveryTracking />} />
           <Route path="exchange-tracking" element={<ExchangeTracking />} />
           <Route path="emi-dues"          element={<EmiDues />} />
+          <Route path="employee-sales-report" element={<EmployeeSalesReport />} />
 
           {/* Quotations */}
           <Route path="quotations"          element={<QuotationsList />} />

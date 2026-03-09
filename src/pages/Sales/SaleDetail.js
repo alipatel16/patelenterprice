@@ -122,10 +122,10 @@ const generateInvoiceHTML = (sale, installments, company) => {
   @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{padding:16px}.np{display:none!important}}
 </style></head><body>
 <div class="page">
-  <div class="np" style="text-align:center;margin-bottom:20px">
-    <button onclick="window.print()" style="background:#1e40af;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600">🖨️ Print Invoice</button>
-    <button onclick="window.close()" style="background:#f3f4f6;color:#333;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:10px">✕ Close</button>
-  </div>
+<div class="np" style="text-align:center;margin-bottom:20px">
+  <button onclick="window.print()" style="background:#1e40af;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600">🖨️ Print Invoice</button>
+  <button onclick="window.close()" style="background:#f3f4f6;color:#333;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:10px">✕ Close</button>
+</div>
   <div class="header">
     <div class="co">
       <h1>${company?.name || ''}</h1>
@@ -468,7 +468,8 @@ const TabPanel = ({ children, value, index }) =>
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const SaleDetail = () => {
-  const { db } = useAuth();
+  // CHANGE 1: added `user, userProfile` to destructuring
+  const { db, user, userProfile } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
   const theme = useTheme();
@@ -542,7 +543,12 @@ const SaleDetail = () => {
       ...existing,
       paidAmount: newPaid,
       status: newStatus,
-      payments: [...(existing.payments || []), { amount, mode, payDate, notes, recordedAt: new Date().toISOString() }],
+      // CHANGE 2: added recordedByName to each EMI payment entry
+      payments: [...(existing.payments || []), {
+        amount, mode, payDate, notes,
+        recordedAt: new Date().toISOString(),
+        recordedByName: userProfile?.name || user?.email || '',
+      }],
     };
 
     try {
@@ -588,7 +594,12 @@ const SaleDetail = () => {
 
   // ── Non-EMI partial payment ──
   const handleRecordSalePayment = async ({ amount, mode, payDate, notes }) => {
-    const newPayment = { amount, mode, payDate, notes, recordedAt: new Date().toISOString() };
+    // CHANGE 3: added recordedByName to each non-EMI payment entry
+    const newPayment = {
+      amount, mode, payDate, notes,
+      recordedAt: new Date().toISOString(),
+      recordedByName: userProfile?.name || user?.email || '',
+    };
     const newPayments = [...(sale.salePayments || []), newPayment];
     const newTotal = newPayments.reduce((s, p) => s + p.amount, 0);
     const newStatus = newTotal >= sale.grandTotal ? 'paid' : 'partial';
@@ -964,6 +975,12 @@ const SaleDetail = () => {
                           <Box>
                             <Typography variant="body2">{formatDate(p.payDate)} · {p.mode}</Typography>
                             {p.notes && <Typography variant="caption" color="text.secondary">{p.notes}</Typography>}
+                            {/* CHANGE 4a: show who recorded this EMI payment */}
+                            {p.recordedByName && (
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Recorded by: <strong>{p.recordedByName}</strong>
+                              </Typography>
+                            )}
                           </Box>
                           <Typography variant="body2" fontWeight={700} color="success.main">+ {formatCurrency(p.amount)}</Typography>
                         </Box>
@@ -1058,7 +1075,13 @@ const SaleDetail = () => {
                             <Chip label={p.mode} size="small" variant="outlined" />
                             <Chip label={`#${i + 1}`} size="small" />
                           </Box>
-                          {p.notes && <Typography variant="caption" color="text.secondary">{p.notes}</Typography>}
+                          {p.notes && <Typography variant="caption" color="text.secondary" display="block">{p.notes}</Typography>}
+                          {/* CHANGE 4b: show who recorded this non-EMI payment */}
+                          {p.recordedByName && (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              Recorded by: <strong>{p.recordedByName}</strong>
+                            </Typography>
+                          )}
                         </Box>
                         <Box textAlign="right">
                           <Typography variant="body1" fontWeight={700} color="success.main">

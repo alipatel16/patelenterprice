@@ -154,7 +154,7 @@ const BulkPriceDialog = ({ open, onClose, currentBulk, onApply, onClear }) => {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const CreateSale = () => {
-  const { db, userProfile } = useAuth();
+  const { db, user, userProfile } = useAuth();
   const navigate = useNavigate();
   const { id } = useParams();
   const isEdit = Boolean(id);
@@ -419,13 +419,40 @@ const CreateSale = () => {
       }
 
       // ── Reset sale-level payments if payment type changed ──
-      const paymentReset = prevPaymentType !== paymentType
-        ? {
-            salePayments: [],
-            totalPaidAmount: 0,
-            paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
-          }
-        : {};
+      let paymentReset = {};
+      if (prevPaymentType !== paymentType) {
+        const resetInitialPayments = [];
+        let resetInitialPaid = 0;
+        if (
+          (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
+          downPayment > 0
+        ) {
+          resetInitialPayments.push({
+            amount: parseFloat(downPayment),
+            mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
+            payDate: saleDate,
+            notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
+            recordedAt: new Date().toISOString(),
+            isDownPayment: true,
+            recordedByUid: user?.uid || '',
+            recordedByName: userProfile?.name || user?.email || 'System',
+          });
+          resetInitialPaid = parseFloat(downPayment);
+        }
+        const resetStatus =
+          paymentType === PAYMENT_TYPES.FULL
+            ? 'paid'
+            : resetInitialPaid >= grandTotal
+            ? 'paid'
+            : resetInitialPaid > 0
+            ? 'partial'
+            : 'unpaid';
+        paymentReset = {
+          salePayments: resetInitialPayments,
+          totalPaidAmount: resetInitialPaid,
+          paymentStatus: resetStatus,
+        };
+      }
 
       // ── Build saleData (same as before) ──
       const saleData = buildSaleData(invoiceNumber, company);
@@ -457,12 +484,40 @@ const CreateSale = () => {
       const saleData = buildSaleData(invoiceNumber, company);
       const emiInstallments = buildEmiInstallments();
 
+      const initialSalePayments = [];
+      let initialTotalPaid = 0;
+      if (
+        (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
+        downPayment > 0
+      ) {
+        initialSalePayments.push({
+          amount: parseFloat(downPayment),
+          mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
+          payDate: saleDate,
+          notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
+          recordedAt: new Date().toISOString(),
+          isDownPayment: true,
+          recordedByUid: user?.uid || '',
+          recordedByName: userProfile?.name || user?.email || 'System',
+        });
+        initialTotalPaid = parseFloat(downPayment);
+      }
+
+      const initialPaymentStatus =
+        paymentType === PAYMENT_TYPES.FULL
+          ? 'paid'
+          : initialTotalPaid >= grandTotal
+          ? 'paid'
+          : initialTotalPaid > 0
+          ? 'partial'
+          : 'unpaid';
+
       await addDoc(collection(db, 'sales'), {
         ...saleData,
         emiInstallments,
-        salePayments: [],
-        totalPaidAmount: 0,
-        paymentStatus: paymentType === PAYMENT_TYPES.FULL ? 'paid' : 'unpaid',
+        salePayments: initialSalePayments,
+        totalPaidAmount: initialTotalPaid,
+        paymentStatus: initialPaymentStatus,
         createdAt: serverTimestamp(),
       });
 
