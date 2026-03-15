@@ -56,10 +56,22 @@ const generateInvoiceHTML = (sale, installments, company) => {
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
   const totalSalePaid = sale.totalPaidAmount || salePayments.reduce((s, p) => s + (p.amount || 0), 0);
+  // FIX: compute live balance instead of using stale stored sale.balanceDue
+  // For EMI: balance = grandTotal - downPayment - sum of all installment paidAmounts
+  // For others: balance = grandTotal - totalSalePaid (which includes down payment)
+  const emiInstallmentsPaid = isEMI
+    ? installments.reduce((s, i) => s + (i.paidAmount || 0), 0)
+    : 0;
+  const currentBalanceDue = sale.paymentType === PAYMENT_TYPES.FULL
+    ? 0
+    : isEMI
+    ? Math.max(0, (sale.grandTotal || 0) - (sale.downPayment || 0) - emiInstallmentsPaid)
+    : Math.max(0, (sale.grandTotal || 0) - totalSalePaid);
   const payStatusHtml = () => {
     if (sale.paymentType === PAYMENT_TYPES.FULL) return '<span style="color:#16a34a;font-weight:700">PAID IN FULL</span>';
-    if (totalSalePaid >= sale.grandTotal) return '<span style="color:#16a34a;font-weight:700">PAID IN FULL</span>';
-    if (totalSalePaid > 0) return `<span style="color:#d97706;font-weight:700">PARTIAL — ${fmt(totalSalePaid)} PAID</span>`;
+    // FIX: use currentBalanceDue (accounts for EMI installment payments) instead of totalSalePaid
+    if (currentBalanceDue <= 0) return '<span style="color:#16a34a;font-weight:700">PAID IN FULL</span>';
+    if (currentBalanceDue < (sale.grandTotal || 0)) return `<span style="color:#d97706;font-weight:700">PARTIAL — ${fmt((sale.grandTotal || 0) - currentBalanceDue)} PAID</span>`;
     return '<span style="color:#dc2626;font-weight:700">PAYMENT PENDING</span>';
   };
 
@@ -167,7 +179,7 @@ const generateInvoiceHTML = (sale, installments, company) => {
     ${sale.hasExchange && sale.exchangeValue > 0 ? `<div class="trow" style="color:#dc2626"><span>Exchange (${sale.exchangeItem})</span><span>− ${fmt(sale.exchangeValue)}</span></div>` : ''}
     <div class="trow big"><span>GRAND TOTAL</span><span>${fmt(sale.grandTotal)}</span></div>
     ${sale.downPayment > 0 ? `<div class="trow" style="color:#16a34a"><span>Down Payment</span><span>${fmt(sale.downPayment)}</span></div>` : ''}
-    ${sale.balanceDue > 0 ? `<div class="trow" style="color:#dc2626;font-weight:600"><span>Balance Due</span><span>${fmt(sale.balanceDue)}</span></div>` : ''}
+    ${currentBalanceDue > 0 ? `<div class="trow" style="color:#dc2626;font-weight:600"><span>Balance Due</span><span>${fmt(currentBalanceDue)}</span></div>` : ''}
   </div></div>
   <div class="igrid">
     <div class="ibox"><div class="il">Payment Method</div><div class="iv">${PAYMENT_LABELS[sale.paymentType] || sale.paymentType}</div>
