@@ -30,7 +30,7 @@ import {
 } from '../../utils/inventoryUtils';
 
 // CHANGE 1: added description: '' to EMPTY_ITEM
-const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '' };
+const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '', hsnCode: '' };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
@@ -277,6 +277,8 @@ const CreateSale = () => {
           arr[idx].unit = prod.unit || 'pcs';
           // CHANGE 2: auto-populate description from product
           arr[idx].description = prod.description || '';
+          // CHANGE B: auto-populate hsnCode from product
+          arr[idx].hsnCode = prod.hsnCode || '';
           const stock = inventory[val] || 0;
           if (stock <= 0) toast.warning(`⚠️ ${prod.name} is OUT OF STOCK!`);
           else if (stock < arr[idx].qty) toast.warning(`⚠️ Only ${stock} units of ${prod.name} in stock`);
@@ -363,6 +365,7 @@ const CreateSale = () => {
       baseAmount: it.baseAmount, totalTax: it.totalTax || 0,
       cgst: it.cgst || 0, sgst: it.sgst || 0, unit: it.unit,
       description: it.description || '',
+      hsnCode: it.hsnCode || '',
     })),
     subtotal, totalTax, grandTotal,
     hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,

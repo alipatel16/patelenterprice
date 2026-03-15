@@ -148,12 +148,13 @@ const generateInvoiceHTML = (sale, installments, company) => {
     <div class="sec-title">Items${sale.bulkPrice > 0 ? ' <span style=\"background:#7c3aed;color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px\">Bulk Price</span>' : ''}</div>
     <div class="tbl"><table>
       <thead><tr>
-        <th>#</th><th>Product</th><th class="r">Qty</th>
+        <th>#</th><th>Product</th><th>HSN</th><th class="r">Qty</th>
         ${!sale.bulkPrice ? `<th class="r">Rate</th>${isGST ? '<th class="r">GST%</th><th class="r">GST Amt</th>' : ''}<th class="r">Amount</th>` : ''}
       </tr></thead>
       <tbody>${items.map((it, i) => `<tr style="background:${i%2===0?'#fff':'#f9fafb'}">
         <td style="padding:8px">${i + 1}</td>
         <td style="padding:8px;font-weight:600">${it.productName}<br><span style="font-size:11px;color:#9ca3af">${it.description || it.unit}</span></td>
+        <td style="padding:8px;color:#374151">${it.hsnCode || '—'}</td>
         <td style="padding:8px;text-align:right">${it.qty}</td>
         ${!sale.bulkPrice ? `<td style="padding:8px;text-align:right">${fmt(it.price)}</td>${isGST ? `<td style="padding:8px;text-align:right">${it.gstRate}%</td><td style="padding:8px;text-align:right;color:#2563eb">${fmt(it.totalTax)}</td>` : ''}<td style="padding:8px;text-align:right;font-weight:600">${fmt(it.subtotal)}</td>` : ''}
       </tr>`).join('')}</tbody>
@@ -720,6 +721,7 @@ const SaleDetail = () => {
                   <TableHead>
                     <TableRow>
                       <TableCell>Product</TableCell>
+                      <TableCell>HSN Code</TableCell>
                       <TableCell align="center">Qty</TableCell>
                       {!sale.bulkPrice && <TableCell align="right">Price</TableCell>}
                       {!sale.bulkPrice && sale.invoiceType === 'gst' && <TableCell align="right">GST</TableCell>}
@@ -731,8 +733,10 @@ const SaleDetail = () => {
                       <TableRow key={i}>
                         <TableCell>
                           <Typography variant="body2" fontWeight={600}>{it.productName}</Typography>
-                          {/* CHANGE 5: show description if available, fall back to unit */}
                           <Typography variant="caption" color="text.secondary">{it.description || it.unit}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{it.hsnCode || '—'}</Typography>
                         </TableCell>
                         <TableCell align="center">{it.qty}</TableCell>
                         {!sale.bulkPrice && (
