@@ -29,7 +29,8 @@ import {
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
 
-const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs' };
+// CHANGE 1: added description: '' to EMPTY_ITEM
+const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '' };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
@@ -274,6 +275,8 @@ const CreateSale = () => {
           arr[idx].price = prod.price;
           arr[idx].gstRate = prod.gstRate || 18;
           arr[idx].unit = prod.unit || 'pcs';
+          // CHANGE 2: auto-populate description from product
+          arr[idx].description = prod.description || '';
           const stock = inventory[val] || 0;
           if (stock <= 0) toast.warning(`⚠️ ${prod.name} is OUT OF STOCK!`);
           else if (stock < arr[idx].qty) toast.warning(`⚠️ Only ${stock} units of ${prod.name} in stock`);
@@ -345,19 +348,21 @@ const CreateSale = () => {
     toast.success('Customer added');
   };
 
-    const buildSaleData = (invoiceNumber, company) => ({
+  const buildSaleData = (invoiceNumber, company) => ({
     invoiceNumber, invoiceType, companyId,
     companyName: company?.name,
     customerId: selectedCustomer.id,
     customerName: selectedCustomer.name,
     customerPhone: selectedCustomer.phone,
     salesperson, saleDate,
+    // CHANGE 4: description saved per item
     items: itemsWithCalc.map(it => ({
       productId: it.productId, productName: it.productName,
       qty: parseFloat(it.qty), price: parseFloat(it.price),
       gstRate: it.gstRate, subtotal: it.subtotal,
       baseAmount: it.baseAmount, totalTax: it.totalTax || 0,
       cgst: it.cgst || 0, sgst: it.sgst || 0, unit: it.unit,
+      description: it.description || '',
     })),
     subtotal, totalTax, grandTotal,
     hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,
@@ -749,6 +754,19 @@ const CreateSale = () => {
                         <Box sx={{ width: 34 }} />
                       )}
                     </Box>
+                  </Grid>
+
+                  {/* CHANGE 3: Description field — full width, below the product row, editable */}
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Item Description"
+                      value={item.description || ''}
+                      onChange={e => setItemField(idx, 'description')(e.target.value)}
+                      size="small"
+                      placeholder="Auto-filled from product, editable"
+                      inputProps={{ maxLength: 300 }}
+                    />
                   </Grid>
                 </Grid>
               </Box>

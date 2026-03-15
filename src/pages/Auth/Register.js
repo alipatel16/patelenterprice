@@ -26,6 +26,9 @@ const Register = () => {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // CHANGE 1: PIN state
+  const [showPinField, setShowPinField] = useState(false);
+  const [pin, setPin] = useState('');
 
   const companies = getCompaniesByStore(store);
   const isElectronics = store === 'electronics';
@@ -42,6 +45,16 @@ const Register = () => {
     }
     if (password !== confirm) { setError('Passwords do not match'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+
+    // CHANGE 2: show PIN field first; validate PIN before registering
+    if (!showPinField) {
+      setShowPinField(true);
+      return;
+    }
+    if (pin !== '515253') {
+      setError('Invalid PIN. Please enter the correct 6-digit PIN.'); return;
+    }
+
     setLoading(true);
     try {
       await register({ email, password, name, role, store, companyId });
@@ -140,6 +153,24 @@ const Register = () => {
               value={confirm} onChange={e => setConfirm(e.target.value)} sx={{ mb: 3 }}
               InputProps={{ startAdornment: <InputAdornment position="start"><Lock fontSize="small" color="action" /></InputAdornment> }}
             />
+
+            {/* CHANGE 3: PIN field — only shown after first submit attempt */}
+            {showPinField && (
+              <TextField
+                fullWidth
+                label="Enter 6-digit PIN *"
+                value={pin}
+                onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                sx={{ mb: 3 }}
+                inputProps={{ maxLength: 6, inputMode: 'numeric' }}
+                helperText="Enter the authorisation PIN to create the account"
+                InputProps={{
+                  startAdornment: <InputAdornment position="start"><Lock fontSize="small" color="action" /></InputAdornment>,
+                }}
+                autoFocus
+              />
+            )}
+
             <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ py: 1.5 }}>
               {loading ? <CircularProgress size={24} color="inherit" /> : 'Create Account'}
             </Button>

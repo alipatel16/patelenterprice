@@ -121,11 +121,11 @@ const generateInvoiceHTML = (sale, installments, company) => {
   .footer p{font-size:11px;color:#9ca3af}
   @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{padding:16px}.np{display:none!important}}
 </style></head><body>
-<div class="page">
 <div class="np" style="text-align:center;margin-bottom:20px">
   <button onclick="window.print()" style="background:#1e40af;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600">🖨️ Print Invoice</button>
   <button onclick="window.close()" style="background:#f3f4f6;color:#333;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:10px">✕ Close</button>
 </div>
+<div class="page">
   <div class="header">
     <div class="co">
       <h1>${company?.name || ''}</h1>
@@ -153,7 +153,7 @@ const generateInvoiceHTML = (sale, installments, company) => {
       </tr></thead>
       <tbody>${items.map((it, i) => `<tr style="background:${i%2===0?'#fff':'#f9fafb'}">
         <td style="padding:8px">${i + 1}</td>
-        <td style="padding:8px;font-weight:600">${it.productName}<br><span style="font-size:11px;color:#9ca3af">${it.unit || ''}</span></td>
+        <td style="padding:8px;font-weight:600">${it.productName}<br><span style="font-size:11px;color:#9ca3af">${it.description || it.unit}</span></td>
         <td style="padding:8px;text-align:right">${it.qty}</td>
         ${!sale.bulkPrice ? `<td style="padding:8px;text-align:right">${fmt(it.price)}</td>${isGST ? `<td style="padding:8px;text-align:right">${it.gstRate}%</td><td style="padding:8px;text-align:right;color:#2563eb">${fmt(it.totalTax)}</td>` : ''}<td style="padding:8px;text-align:right;font-weight:600">${fmt(it.subtotal)}</td>` : ''}
       </tr>`).join('')}</tbody>
@@ -731,7 +731,8 @@ const SaleDetail = () => {
                       <TableRow key={i}>
                         <TableCell>
                           <Typography variant="body2" fontWeight={600}>{it.productName}</Typography>
-                          <Typography variant="caption" color="text.secondary">{it.unit}</Typography>
+                          {/* CHANGE 5: show description if available, fall back to unit */}
+                          <Typography variant="caption" color="text.secondary">{it.description || it.unit}</Typography>
                         </TableCell>
                         <TableCell align="center">{it.qty}</TableCell>
                         {!sale.bulkPrice && (
