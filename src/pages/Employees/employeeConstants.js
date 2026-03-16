@@ -26,10 +26,12 @@ export const LOCATION_CONFIGS = {
   electronics: [
     { lat: 23.126824, lng: 72.048638, label: 'Electronics Store 1' },
     { lat: 23.133828, lng: 72.038712, label: 'Electronics Store 2' },
+    { lat: 23.133112, lng: 72.040456, label: 'Electronics Store 3' },
   ],
   furniture: [
     { lat: 23.133828, lng: 72.038712, label: 'Furniture Store 1' },
     { lat: 23.125135, lng: 72.044948, label: 'Furniture Store 2' },
+    { lat: 23.133112, lng: 72.040456, label: 'Furniture Store 3' },
   ],
 };
 

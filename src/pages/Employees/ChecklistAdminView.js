@@ -12,7 +12,7 @@ import {
 import {
   CheckCircle, RadioButtonUnchecked, Today, CalendarMonth,
   Refresh, ArrowBack, ArrowForward, ExpandMore, ExpandLess,
-  Assignment,
+  Assignment, Warning,
 } from '@mui/icons-material';
 import {
   collection, query, where, getDocs, orderBy,
@@ -32,7 +32,7 @@ const ChecklistDailyView = ({ db }) => {
 
   const [selDate,    setSelDate]    = useState(getTodayStr());
   const [employees,  setEmployees]  = useState([]);
-  const [instances,  setInstances]  = useState([]);   // all checklist instances for the date
+  const [instances,  setInstances]  = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [expandedEmp, setExpandedEmp] = useState(null);
   const [page,       setPage]       = useState(0);
@@ -51,7 +51,6 @@ const ChecklistDailyView = ({ db }) => {
     const load = async () => {
       setLoading(true);
       try {
-        // Load employees (paginated)
         let q;
         if (page === 0) {
           q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), limit(PAGE_SIZE));
@@ -67,7 +66,6 @@ const ChecklistDailyView = ({ db }) => {
         }
         setEmployees(emps);
 
-        // Load checklist instances for the date
         const uids = emps.map(e => e.id);
         if (uids.length > 0) {
           const clSnap = await getDocs(
@@ -97,7 +95,6 @@ const ChecklistDailyView = ({ db }) => {
     return { total: items.length, done, pct: items.length > 0 ? Math.round((done / items.length) * 100) : null };
   };
 
-  // Summary stats
   const allWithItems = employees.filter(e => getEmpStats(e.id).total > 0);
   const allComplete  = allWithItems.filter(e => { const s = getEmpStats(e.id); return s.done === s.total; });
   const noneStarted  = employees.filter(e => getEmpStats(e.id).total === 0);
@@ -128,9 +125,9 @@ const ChecklistDailyView = ({ db }) => {
       {/* Summary Cards */}
       <Grid container spacing={2} mb={3}>
         {[
-          { label: 'All Complete',  val: allComplete.length,  color: 'success' },
+          { label: 'All Complete',   val: allComplete.length,                       color: 'success' },
           { label: 'Partial / None', val: allWithItems.length - allComplete.length, color: 'warning' },
-          { label: 'No Checklists', val: noneStarted.length,  color: 'default' },
+          { label: 'No Checklists',  val: noneStarted.length,                       color: 'default' },
         ].map(s => (
           <Grid item xs={4} key={s.label}>
             <Card sx={{ textAlign: 'center' }}>
@@ -217,19 +214,30 @@ const ChecklistDailyView = ({ db }) => {
                               <Box sx={{ px: 3, py: 1.5 }}>
                                 <Stack spacing={0.75}>
                                   {items.map(cl => (
-                                    <Box key={cl.id} display="flex" alignItems="center" justifyContent="space-between"
+                                    <Box key={cl.id} display="flex" alignItems="flex-start" justifyContent="space-between"
                                       sx={{ p: 1.5, bgcolor: cl.completed ? 'success.50' : 'error.50',
                                             borderRadius: 1, border: '1px solid',
                                             borderColor: cl.completed ? 'success.200' : 'error.200' }}>
-                                      <Box display="flex" alignItems="center" gap={1}>
+                                      <Box display="flex" alignItems="flex-start" gap={1} flex={1}>
                                         {cl.completed
-                                          ? <CheckCircle color="success" fontSize="small" />
-                                          : <RadioButtonUnchecked color="error" fontSize="small" />
+                                          ? <CheckCircle color="success" fontSize="small" sx={{ mt: 0.2 }} />
+                                          : <RadioButtonUnchecked color="error" fontSize="small" sx={{ mt: 0.2 }} />
                                         }
-                                        <Typography variant="body2">{cl.templateTitle}</Typography>
+                                        <Box>
+                                          <Typography variant="body2">{cl.templateTitle}</Typography>
+                                          {/* FIX: show not-completed reason if employee provided one */}
+                                          {!cl.completed && cl.notCompletedReason && (
+                                            <Box display="flex" alignItems="center" gap={0.5} mt={0.5}>
+                                              <Warning sx={{ fontSize: 12, color: 'warning.main' }} />
+                                              <Typography variant="caption" color="warning.dark">
+                                                Reason: {cl.notCompletedReason}
+                                              </Typography>
+                                            </Box>
+                                          )}
+                                        </Box>
                                       </Box>
                                       {cl.completed && cl.completedAt && (
-                                        <Typography variant="caption" color="text.secondary">
+                                        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
                                           {formatTime(cl.completedAt)}
                                         </Typography>
                                       )}
@@ -262,7 +270,7 @@ const ChecklistMonthlyView = ({ db }) => {
   const [selYear,   setSelYear]   = useState(now.getFullYear());
   const [selMonth,  setSelMonth]  = useState(now.getMonth());
   const [employees, setEmployees] = useState([]);
-  const [instances, setInstances] = useState([]);  // {userId, date, completed, templateTitle}
+  const [instances, setInstances] = useState([]);
   const [loading,   setLoading]   = useState(false);
   const [selEmp,    setSelEmp]    = useState('all');
 
@@ -296,7 +304,9 @@ const ChecklistMonthlyView = ({ db }) => {
       }
     };
     load();
-  }, [db, selYear, selMonth]);
+  }, [db, selYear, selMonth, daysInMonth]);
+
+  const filteredEmps = selEmp === 'all' ? employees : employees.filter(e => e.id === selEmp);
 
   const getDayStats = (uid, day) => {
     const dateStr = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -306,96 +316,83 @@ const ChecklistMonthlyView = ({ db }) => {
     return { total: items.length, done, pct: Math.round((done / items.length) * 100) };
   };
 
-  const filteredEmployees = selEmp === 'all' ? employees : employees.filter(e => e.id === selEmp);
-
-  const prevMonth = () => { if (selMonth === 0) { setSelYear(y => y-1); setSelMonth(11); } else setSelMonth(m => m-1); };
-  const nextMonth = () => { if (selMonth === 11) { setSelYear(y => y+1); setSelMonth(0); } else setSelMonth(m => m+1); };
-
   return (
     <Box>
       {/* Controls */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
+      <Box display="flex" alignItems="center" gap={2} mb={3} flexWrap="wrap">
         <Stack direction="row" spacing={1} alignItems="center">
-          <IconButton onClick={prevMonth}><ArrowBack /></IconButton>
-          <Typography variant="h6" fontWeight={700} minWidth={140} textAlign="center">
-            {MONTH_NAMES[selMonth]} {selYear}
-          </Typography>
-          <IconButton onClick={nextMonth}><ArrowForward /></IconButton>
+          <IconButton size="small"
+            onClick={() => {
+              if (selMonth === 0) { setSelYear(y => y - 1); setSelMonth(11); }
+              else setSelMonth(m => m - 1);
+            }}>
+            <ArrowBack fontSize="small" />
+          </IconButton>
+          <Typography fontWeight={700}>{MONTH_NAMES[selMonth]} {selYear}</Typography>
+          <IconButton size="small"
+            onClick={() => {
+              if (selMonth === 11) { setSelYear(y => y + 1); setSelMonth(0); }
+              else setSelMonth(m => m + 1);
+            }}>
+            <ArrowForward fontSize="small" />
+          </IconButton>
         </Stack>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Filter Employee</InputLabel>
-          <Select value={selEmp} label="Filter Employee" onChange={e => setSelEmp(e.target.value)}>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Employee</InputLabel>
+          <Select value={selEmp} onChange={e => setSelEmp(e.target.value)} label="Employee">
             <MenuItem value="all">All Employees</MenuItem>
             {employees.map(e => <MenuItem key={e.id} value={e.id}>{e.name}</MenuItem>)}
           </Select>
         </FormControl>
       </Box>
 
-      {/* Legend */}
-      <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">
-        {[
-          { label: '100% Done', bg: '#d1fae5', border: '#6ee7b7' },
-          { label: 'Partial',   bg: '#fef3c7', border: '#fcd34d' },
-          { label: 'Incomplete',bg: '#fee2e2', border: '#fca5a5' },
-          { label: 'No tasks',  bg: 'transparent', border: '#e5e7eb' },
-        ].map(l => (
-          <Box key={l.label} display="flex" alignItems="center" gap={0.5}>
-            <Box sx={{ width: 14, height: 14, borderRadius: 0.5, bgcolor: l.bg, border: `1px solid ${l.border}` }} />
-            <Typography variant="caption">{l.label}</Typography>
-          </Box>
-        ))}
-      </Stack>
-
       {loading ? (
-        <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
+        <Box display="flex" justifyContent="center" py={5}><CircularProgress /></Box>
       ) : (
         <Card>
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table size="small" sx={{ minWidth: 600 }}>
+            <Table size="small">
               <TableHead>
                 <TableRow sx={{ bgcolor: 'grey.50' }}>
-                  <TableCell sx={{ position: 'sticky', left: 0, bgcolor: 'grey.50', zIndex: 1, minWidth: 130 }}>
+                  <TableCell sx={{ minWidth: 120, position: 'sticky', left: 0, bgcolor: 'grey.50', zIndex: 1 }}>
                     Employee
                   </TableCell>
-                  {dayNums.map(d => {
-                    const date = new Date(selYear, selMonth, d);
-                    const isSun = date.getDay() === 0;
-                    return (
-                      <TableCell key={d} align="center" sx={{ minWidth: 30, p: '4px 2px',
-                        color: isSun ? 'error.main' : 'text.primary', fontWeight: 700, fontSize: 11 }}>
-                        {d}
-                      </TableCell>
-                    );
-                  })}
-                  <TableCell align="center" sx={{ minWidth: 70, fontSize: 11 }}>Avg %</TableCell>
+                  {dayNums.map(d => (
+                    <TableCell key={d} align="center" sx={{ minWidth: 36, px: 0.5, fontSize: 11 }}>
+                      {d}
+                    </TableCell>
+                  ))}
+                  <TableCell align="center" sx={{ minWidth: 60 }}>Avg</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredEmployees.map(emp => {
-                  let totalPct = 0, daysWithTasks = 0;
-                  const today = getTodayStr();
+                {filteredEmps.map(emp => {
+                  let totalPct = 0;
+                  let daysWithTasks = 0;
                   return (
                     <TableRow key={emp.id} hover>
                       <TableCell sx={{ position: 'sticky', left: 0, bgcolor: 'background.paper', zIndex: 1 }}>
-                        <Typography variant="body2" fontWeight={600} noWrap>{emp.name}</Typography>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <Avatar sx={{ width: 22, height: 22, fontSize: 10, bgcolor: 'primary.main' }}>
+                            {(emp.name || '?')[0]}
+                          </Avatar>
+                          <Typography variant="caption" fontWeight={600} noWrap>{emp.name}</Typography>
+                        </Box>
                       </TableCell>
                       {dayNums.map(d => {
-                        const dateStr = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                        const isFuture = dateStr > today;
                         const stats = getDayStats(emp.id, d);
                         if (stats) { totalPct += stats.pct; daysWithTasks++; }
-                        const bg = !stats ? 'transparent'
-                          : stats.pct === 100 ? '#d1fae5'
-                          : stats.pct > 0    ? '#fef3c7'
-                          :                    '#fee2e2';
                         return (
-                          <TableCell key={d} align="center" sx={{ p: '2px', bgcolor: isFuture ? 'transparent' : bg }}>
-                            {!isFuture && stats && (
+                          <TableCell key={d} align="center" sx={{ px: 0.5 }}>
+                            {stats ? (
                               <Tooltip title={`${stats.done}/${stats.total} (${stats.pct}%)`}>
-                                <Typography variant="caption" fontWeight={700} sx={{ fontSize: 10 }}>
+                                <Typography variant="caption" fontWeight={700}
+                                  sx={{ color: stats.pct === 100 ? 'success.main' : stats.pct > 50 ? 'warning.main' : 'error.main' }}>
                                   {stats.pct === 100 ? '✓' : `${stats.pct}%`}
                                 </Typography>
                               </Tooltip>
+                            ) : (
+                              <Typography variant="caption" color="text.disabled">—</Typography>
                             )}
                           </TableCell>
                         );

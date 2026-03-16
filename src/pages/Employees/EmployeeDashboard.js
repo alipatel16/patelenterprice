@@ -54,6 +54,8 @@ const EmployeeDashboard = () => {
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [leaveReason,      setLeaveReason]      = useState('');
   const [pendingChecklists, setPendingChecklists] = useState([]);
+  // CHANGE 1: per-checklist not-completed reasons state
+  const [checklistReasons, setChecklistReasons] = useState({});
 
   const logDocId = `${userId}_${today}`;
 
@@ -85,7 +87,23 @@ const EmployeeDashboard = () => {
     const assigned = userProfile?.assignedChecklists || [];
     if (assigned.length === 0) return;
 
-    const promises = assigned
+    // CHANGE 2: verify each template still exists before generating instance
+    const templateSnaps = await Promise.all(
+      assigned.map(cl => getDoc(doc(db, 'checklistTemplates', cl.templateId)))
+    );
+    const validAssigned = assigned.filter((_, i) => templateSnaps[i].exists());
+
+    // Silently remove deleted templates from user profile
+    if (validAssigned.length !== assigned.length) {
+      try {
+        await updateDoc(doc(db, 'users', userId), {
+          assignedChecklists: validAssigned,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (_) { /* non-critical */ }
+    }
+
+    const promises = validAssigned
       .filter(cl => shouldGenerateChecklist(cl, today))
       .map(async cl => {
         const instanceId = `${userId}_${cl.templateId}_${today}`;
@@ -157,6 +175,8 @@ const EmployeeDashboard = () => {
     if (!log) return;
     setActionLoading(true);
     try {
+      // CHANGE 3: location check before taking break
+      await validateLocation();
       const breaks = [...(log.breaks || []), { startTime: new Date().toISOString(), endTime: null }];
       await updateDoc(doc(db, 'attendanceLogs', logDocId), {
         breaks, updatedAt: new Date().toISOString(),
@@ -175,6 +195,8 @@ const EmployeeDashboard = () => {
     if (!log) return;
     setActionLoading(true);
     try {
+      // CHANGE 3: location check before resuming from break
+      await validateLocation();
       const breaks = (log.breaks || []).map((b, i) =>
         i === log.breaks.length - 1 && !b.endTime
           ? { ...b, endTime: new Date().toISOString() }
@@ -198,6 +220,7 @@ const EmployeeDashboard = () => {
     const pending = checklists.filter(cl => !cl.completed);
     if (pending.length > 0) {
       setPendingChecklists(pending);
+      setChecklistReasons({}); // CHANGE 1: reset reasons on open
       setLogoutDialogOpen(true);
     } else {
       await performClockOut();
@@ -228,6 +251,24 @@ const EmployeeDashboard = () => {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  // CHANGE 1: save not-completed reasons then perform clock out
+  const performClockOutWithReasons = async () => {
+    setActionLoading(true);
+    try {
+      const reasonSavePromises = pendingChecklists
+        .filter(cl => checklistReasons[cl.id]?.trim())
+        .map(cl =>
+          updateDoc(doc(db, 'checklistInstances', cl.id), {
+            notCompleted:       true,
+            notCompletedReason: checklistReasons[cl.id].trim(),
+            notCompletedAt:     new Date().toISOString(),
+          })
+        );
+      if (reasonSavePromises.length > 0) await Promise.all(reasonSavePromises);
+    } catch (_) { /* non-critical */ }
+    await performClockOut();
   };
 
   // ── Mark Leave ────────────────────────────────────────────────────────────
@@ -436,7 +477,7 @@ const EmployeeDashboard = () => {
               </Typography>
               <Chip
                 label={`${completedCount} / ${checklists.length}`}
-                color={progress === 100 ? 'success' : 'default'}
+                color={progress === 100 ? 'success' : progress > 0 ? 'warning' : 'default'}
                 size="small"
               />
             </Box>
@@ -545,23 +586,36 @@ const EmployeeDashboard = () => {
         </DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            You have <strong>{pendingChecklists.length}</strong> incomplete checklist item(s). Please complete them before End of Day.
+            You have <strong>{pendingChecklists.length}</strong> incomplete checklist item(s).
+            You can provide a reason for each before clocking out.
           </Alert>
-          <Stack spacing={1}>
+          {/* CHANGE 1: per-checklist reason fields */}
+          <Stack spacing={1.5}>
             {pendingChecklists.map(cl => (
-              <Box key={cl.id} display="flex" alignItems="center" gap={1}
+              <Box key={cl.id}
                 sx={{ p: 1.5, bgcolor: 'warning.50', borderRadius: 1, border: '1px solid', borderColor: 'warning.200' }}>
-                <Warning color="warning" fontSize="small" />
-                <Typography variant="body2" fontWeight={600}>{cl.templateTitle}</Typography>
+                <Box display="flex" alignItems="center" gap={1} mb={1}>
+                  <Warning color="warning" fontSize="small" />
+                  <Typography variant="body2" fontWeight={600}>{cl.templateTitle}</Typography>
+                </Box>
+                <TextField
+                  fullWidth size="small"
+                  label="Reason not completed (optional)"
+                  placeholder="e.g. Task deferred, will do tomorrow…"
+                  value={checklistReasons[cl.id] || ''}
+                  onChange={e => setChecklistReasons(prev => ({ ...prev, [cl.id]: e.target.value }))}
+                  multiline rows={2}
+                />
               </Box>
             ))}
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setLogoutDialogOpen(false)} color="primary" variant="outlined">
-            Go Back & Complete
+            Go Back &amp; Complete
           </Button>
-          <Button onClick={performClockOut} color="error" variant="contained"
+          {/* CHANGE 1: uses performClockOutWithReasons to save reasons first */}
+          <Button onClick={performClockOutWithReasons} color="error" variant="contained"
             disabled={actionLoading}>
             {actionLoading ? <CircularProgress size={16} /> : 'Clock Out Anyway'}
           </Button>

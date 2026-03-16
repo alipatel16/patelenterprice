@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Save, Person, Lock, Assignment,
-  AttachMoney, CheckCircle,
+  AttachMoney, CheckCircle, Delete as DeleteIcon,
 } from '@mui/icons-material';
 import {
   doc, getDoc, updateDoc, serverTimestamp,
@@ -36,11 +36,11 @@ const EmployeeProfile = () => {
   const [joinDate,     setJoinDate]     = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
   const [allowedPages, setAllowedPages] = useState([]);
-  const [allAccessMode, setAllAccessMode] = useState(true); // true = all pages allowed (no restriction)
+  const [allAccessMode, setAllAccessMode] = useState(true);
 
   // Checklists
   const [checklistTemplates,  setChecklistTemplates]  = useState([]);
-  const [assignedChecklists,  setAssignedChecklists]  = useState([]); // [{templateId, templateTitle}]
+  const [assignedChecklists,  setAssignedChecklists]  = useState([]);
 
   useEffect(() => {
     if (!db || !id) return;
@@ -51,6 +51,7 @@ const EmployeeProfile = () => {
           getDoc(doc(db, 'users', id)),
           getDocs(query(collection(db, 'checklistTemplates'), orderBy('title'))),
         ]);
+
         if (!empSnap.exists()) { toast.error('Employee not found'); navigate('/employees'); return; }
         const data = empSnap.data();
         setEmp({ id: empSnap.id, ...data });
@@ -66,8 +67,16 @@ const EmployeeProfile = () => {
           setAllAccessMode(true);
           setAllowedPages([]);
         }
-        setAssignedChecklists(data.assignedChecklists || []);
-        setChecklistTemplates(clSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+
+        const templates = clSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setChecklistTemplates(templates);
+
+        // FIX: auto-remove assigned checklists whose template has been deleted
+        const activeTemplateIds = new Set(templates.map(t => t.id));
+        const filteredChecklists = (data.assignedChecklists || []).filter(
+          cl => activeTemplateIds.has(cl.templateId)
+        );
+        setAssignedChecklists(filteredChecklists);
       } catch (e) {
         setError(e.message);
       } finally {
@@ -91,6 +100,11 @@ const EmployeeProfile = () => {
       setAllAccessMode(false);
       setAllowedPages(ALL_PAGES.map(p => p.path));
     }
+  };
+
+  // FIX: unassign a specific checklist template
+  const handleUnassignChecklist = (templateId) => {
+    setAssignedChecklists(prev => prev.filter(cl => cl.templateId !== templateId));
   };
 
   const handleSave = async () => {
@@ -143,94 +157,83 @@ const EmployeeProfile = () => {
             <Typography variant="body2" color="text.secondary">{emp.email}</Typography>
           </Box>
         </Box>
-        <Button variant="contained" startIcon={saving ? <CircularProgress size={16} /> : <Save />}
-          onClick={handleSave} disabled={saving}>
-          Save
-        </Button>
+        <Chip label={emp.role === 'admin' ? 'Admin' : 'Employee'} color={emp.role === 'admin' ? 'error' : 'primary'} size="small" />
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {/* Basic Info */}
+      {/* Profile Details */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Box display="flex" alignItems="center" gap={1} mb={2}>
             <Person color="primary" />
-            <Typography variant="subtitle1" fontWeight={700}>Employee Details</Typography>
+            <Typography variant="subtitle1" fontWeight={700}>Profile Details</Typography>
           </Box>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth size="small" label="Employee Code"
-                value={employeeCode} onChange={e => setEmployeeCode(e.target.value)} />
+              <TextField fullWidth label="Phone Number" value={phone}
+                onChange={e => setPhone(e.target.value)} size="small"
+                InputProps={{ startAdornment: <InputAdornment position="start">📱</InputAdornment> }} />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth size="small" label="Department"
-                value={department} onChange={e => setDepartment(e.target.value)} />
+              <TextField fullWidth label="Employee Code" value={employeeCode}
+                onChange={e => setEmployeeCode(e.target.value)} size="small" />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth size="small" label="Phone"
-                value={phone} onChange={e => setPhone(e.target.value)} />
+              <TextField fullWidth label="Department" value={department}
+                onChange={e => setDepartment(e.target.value)} size="small" />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth size="small" label="Join Date" type="date"
-                value={joinDate} onChange={e => setJoinDate(e.target.value)}
+              <TextField fullWidth label="Join Date" type="date" value={joinDate}
+                onChange={e => setJoinDate(e.target.value)} size="small"
                 InputLabelProps={{ shrink: true }} />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField fullWidth size="small" label="Monthly Salary (₹)"
-                value={salary} onChange={e => setSalary(e.target.value)}
-                type="number"
+              <TextField fullWidth label="Monthly Salary (₹)" type="number" value={salary}
+                onChange={e => setSalary(e.target.value)} size="small"
                 InputProps={{ startAdornment: <InputAdornment position="start"><AttachMoney fontSize="small" /></InputAdornment> }} />
             </Grid>
           </Grid>
         </CardContent>
       </Card>
 
-      {/* Page Access */}
+      {/* Page Access Control */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Lock color="warning" />
-              <Typography variant="subtitle1" fontWeight={700}>Page Access Control</Typography>
-            </Box>
-            <Chip
-              label={allAccessMode ? 'All Pages Allowed' : `${allowedPages.length} of ${ALL_PAGES.length} pages`}
-              color={allAccessMode ? 'success' : 'warning'}
-              size="small"
-            />
+          <Box display="flex" alignItems="center" gap={1} mb={1}>
+            <Lock color="warning" />
+            <Typography variant="subtitle1" fontWeight={700}>Page Access Control</Typography>
           </Box>
-
           <FormControlLabel
             control={<Checkbox checked={allAccessMode} onChange={toggleAllAccess} color="success" />}
-            label={<Typography fontWeight={600}>Allow All Pages (no restriction)</Typography>}
-            sx={{ mb: 2, p: 1.5, bgcolor: 'success.50', borderRadius: 1, border: '1px solid', borderColor: 'success.200', width: '100%', mx: 0 }}
+            label={<Typography variant="body2">All Access (no restrictions)</Typography>}
+            sx={{ mb: 1 }}
           />
-
           {!allAccessMode && (
             <>
-              <Divider sx={{ mb: 2 }} />
-              <Typography variant="body2" color="text.secondary" mb={1.5}>
+              <Divider sx={{ my: 1.5 }} />
+              <Typography variant="body2" color="text.secondary" mb={1}>
                 Select which pages this employee can access:
               </Typography>
-              <Grid container spacing={0.5}>
-                {ALL_PAGES.map(pg => (
-                  <Grid item xs={12} sm={6} md={4} key={pg.path}>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={allowedPages.includes(pg.path)}
-                          onChange={() => togglePage(pg.path)}
-                        />
-                      }
-                      label={<Typography variant="body2">{pg.label}</Typography>}
-                      sx={{ m: 0, p: 0.5 }}
-                    />
-                  </Grid>
-                ))}
-              </Grid>
-              <Box mt={1.5} display="flex" gap={1} flexWrap="wrap">
+              <FormGroup>
+                <Grid container>
+                  {ALL_PAGES.map(page => (
+                    <Grid item xs={12} sm={6} key={page.path}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={allowedPages.includes(page.path)}
+                            onChange={() => togglePage(page.path)}
+                            size="small"
+                          />
+                        }
+                        label={<Typography variant="body2">{page.label}</Typography>}
+                      />
+                    </Grid>
+                  ))}
+                </Grid>
+              </FormGroup>
+              <Box display="flex" gap={1} mt={1}>
                 <Button size="small" variant="outlined"
                   onClick={() => setAllowedPages(ALL_PAGES.map(p => p.path))}>
                   Select All
@@ -261,11 +264,11 @@ const EmployeeProfile = () => {
             value={checklistTemplates.filter(t => assignedChecklists.some(a => a.templateId === t.id))}
             onChange={(_, selected) => {
               setAssignedChecklists(selected.map(s => ({
-                templateId:    s.id,
-                templateTitle: s.title,
+                templateId:     s.id,
+                templateTitle:  s.title,
                 occurrenceType: s.occurrenceType,
-                dayOfWeek:     s.dayOfWeek,
-                dayOfMonth:    s.dayOfMonth,
+                dayOfWeek:      s.dayOfWeek,
+                dayOfMonth:     s.dayOfMonth,
               })));
             }}
             renderTags={(value, getTagProps) =>
@@ -305,14 +308,26 @@ const EmployeeProfile = () => {
                       <CheckCircle sx={{ color: 'info.main', fontSize: 18 }} />
                       <Typography variant="body2" fontWeight={600}>{cl.templateTitle}</Typography>
                     </Box>
-                    <Chip
-                      label={
-                        cl.occurrenceType === 'daily' ? 'Daily' :
-                        cl.occurrenceType === 'weekly' ? `Weekly · Day ${cl.dayOfWeek ?? ''}` :
-                        `Monthly · ${cl.dayOfMonth}`
-                      }
-                      size="small" variant="outlined" color="info"
-                    />
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Chip
+                        label={
+                          cl.occurrenceType === 'daily' ? 'Daily' :
+                          cl.occurrenceType === 'weekly' ? `Weekly · Day ${cl.dayOfWeek ?? ''}` :
+                          `Monthly · ${cl.dayOfMonth}`
+                        }
+                        size="small" variant="outlined" color="info"
+                      />
+                      {/* FIX: unassign button */}
+                      <Tooltip title="Unassign this checklist">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleUnassignChecklist(cl.templateId)}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
                   </Box>
                 ))}
               </Stack>
