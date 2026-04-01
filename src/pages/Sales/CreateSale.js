@@ -676,7 +676,7 @@ const CreateSale = () => {
               >
                 <Grid container spacing={1} alignItems="center">
                   {/* Product */}
-                  <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
+                  {/* <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
                     <FormControl fullWidth size="small">
                       <InputLabel>Product *</InputLabel>
                       <Select
@@ -696,6 +696,32 @@ const CreateSale = () => {
                         ))}
                       </Select>
                     </FormControl>
+                  </Grid> */}
+
+                  {/* Product */}
+                  <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
+                    <Autocomplete
+                      fullWidth
+                      size="small"
+                      options={products}
+                      getOptionLabel={p => p.name || ''}
+                      value={products.find(p => p.id === item.productId) || null}
+                      onChange={(_, v) => setItemField(idx, 'productId')(v?.id || '')}
+                      isOptionEqualToValue={(o, v) => o.id === v.id}
+                      renderOption={(props, p) => (
+                        <Box component="li" {...props} key={p.id}>
+                          <Box>
+                            <Typography variant="body2">{p.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {formatCurrency(p.price)} · Stock: {inventory[p.id] || 0}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      )}
+                      renderInput={params => (
+                        <TextField {...params} label="Product *" size="small" />
+                      )}
+                    />
                   </Grid>
 
                   {/* Qty */}
