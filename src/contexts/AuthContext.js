@@ -28,10 +28,25 @@ export const AuthProvider = ({ children }) => {
     const auth = getAuthByStore(storeType);
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        setUser(firebaseUser);
         const db = getDbByStore(storeType);
         const profileDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (profileDoc.exists()) setUserProfile(profileDoc.data());
+        if (profileDoc.exists()) {
+          const profile = profileDoc.data();
+
+          // ── Disabled check: sign out immediately if account is disabled ──
+          if (profile.disabled === true) {
+            await signOut(auth);
+            localStorage.removeItem('storeType');
+            setStoreType(null);
+            setUser(null);
+            setUserProfile(null);
+            setLoading(false);
+            return;
+          }
+
+          setUser(firebaseUser);
+          setUserProfile(profile);
+        }
       } else {
         setUser(null);
         setUserProfile(null);
@@ -70,6 +85,13 @@ export const AuthProvider = ({ children }) => {
     const profileDoc = await getDoc(doc(db, 'users', cred.user.uid));
     if (!profileDoc.exists()) throw new Error('User profile not found');
     const profile = profileDoc.data();
+
+    // ── Disabled check: block login and sign out Firebase session ──
+    if (profile.disabled === true) {
+      await signOut(auth);
+      throw new Error('This account has been disabled. Please contact your administrator.');
+    }
+
     localStorage.setItem('storeType', store);
     setStoreType(store);
     setUser(cred.user);

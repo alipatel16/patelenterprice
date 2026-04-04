@@ -324,7 +324,7 @@ const BrandHierarchyList = () => {
             </Table>
           </TableContainer>
           <TablePagination component="div" count={total} page={page}
-            onPageChange={(_, p) => { setPage(p); setCursorMap({}); }}
+            onPageChange={(_, p) => { setPage(p); }}
             rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
         </Card>
       )}

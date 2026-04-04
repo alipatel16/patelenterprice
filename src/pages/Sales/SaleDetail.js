@@ -56,9 +56,6 @@ const generateInvoiceHTML = (sale, installments, company) => {
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
   const totalSalePaid = sale.totalPaidAmount || salePayments.reduce((s, p) => s + (p.amount || 0), 0);
-  // FIX: compute live balance instead of using stale stored sale.balanceDue
-  // For EMI: balance = grandTotal - downPayment - sum of all installment paidAmounts
-  // For others: balance = grandTotal - totalSalePaid (which includes down payment)
   const emiInstallmentsPaid = isEMI
     ? installments.reduce((s, i) => s + (i.paidAmount || 0), 0)
     : 0;
@@ -69,7 +66,6 @@ const generateInvoiceHTML = (sale, installments, company) => {
     : Math.max(0, (sale.grandTotal || 0) - totalSalePaid);
   const payStatusHtml = () => {
     if (sale.paymentType === PAYMENT_TYPES.FULL) return '<span style="color:#16a34a;font-weight:700">PAID IN FULL</span>';
-    // FIX: use currentBalanceDue (accounts for EMI installment payments) instead of totalSalePaid
     if (currentBalanceDue <= 0) return '<span style="color:#16a34a;font-weight:700">PAID IN FULL</span>';
     if (currentBalanceDue < (sale.grandTotal || 0)) return `<span style="color:#d97706;font-weight:700">PARTIAL — ${fmt((sale.grandTotal || 0) - currentBalanceDue)} PAID</span>`;
     return '<span style="color:#dc2626;font-weight:700">PAYMENT PENDING</span>';
@@ -183,6 +179,7 @@ const generateInvoiceHTML = (sale, installments, company) => {
   </div></div>
   <div class="igrid">
     <div class="ibox"><div class="il">Payment Method</div><div class="iv">${PAYMENT_LABELS[sale.paymentType] || sale.paymentType}</div>
+      ${sale.paymentMode ? `<div style="font-size:12px;color:#6b7280;margin-top:2px">Mode: <strong>${sale.paymentMode}</strong></div>` : ''}
       ${sale.financerName ? `<div style="font-size:12px;color:#6b7280;margin-top:2px">Financer: ${sale.financerName}</div>` : ''}
       ${sale.paymentRef ? `<div style="font-size:12px;color:#6b7280">Ref: ${sale.paymentRef}</div>` : ''}
     </div>
@@ -481,7 +478,6 @@ const TabPanel = ({ children, value, index }) =>
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const SaleDetail = () => {
-  // CHANGE 1: added `user, userProfile` to destructuring
   const { db, user, userProfile } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
@@ -491,9 +487,9 @@ const SaleDetail = () => {
   const [sale, setSale] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(0);
-  const [payDialog, setPayDialog] = useState(null);       // EMI installment
-  const [dateDialog, setDateDialog] = useState(null);     // Change due date
-  const [salePayDialog, setSalePayDialog] = useState(false); // Non-EMI payment
+  const [payDialog, setPayDialog] = useState(null);
+  const [dateDialog, setDateDialog] = useState(null);
+  const [salePayDialog, setSalePayDialog] = useState(false);
 
   const loadSale = useCallback(async () => {
     setLoading(true);
@@ -502,8 +498,6 @@ const SaleDetail = () => {
       if (!snap.exists()) { toast.error('Sale not found'); navigate('/sales'); return; }
       let saleData = { id: snap.id, ...snap.data() };
 
-      // ── Backward compatibility: migrate old emi_installments collection ──
-      // If this sale has EMI but no emiInstallments array, try loading from old collection
       if (saleData.paymentType === PAYMENT_TYPES.EMI && !saleData.emiInstallments?.length) {
         try {
           const oldSnap = await getDocs(
@@ -512,20 +506,17 @@ const SaleDetail = () => {
           if (!oldSnap.empty) {
             const oldInstallments = oldSnap.docs.map(d => {
               const data = d.data();
-              // Strip Firestore-specific fields and keep only the data
               const { saleId, invoiceNumber: _inv, customerName: _cn, customerPhone: _cp,
                 createdAt: _ca, updatedAt: _ua, ...rest } = data;
               return rest;
             });
             saleData = { ...saleData, emiInstallments: oldInstallments };
-            // Optionally migrate: write them back to sale doc
             await updateDoc(doc(db, 'sales', id), {
               emiInstallments: oldInstallments,
               updatedAt: serverTimestamp(),
             });
           }
         } catch (e) {
-          // Old collection may not exist or index missing — ignore silently
           console.warn('[SaleDetail] Could not migrate old emi_installments:', e.message);
         }
       }
@@ -542,7 +533,6 @@ const SaleDetail = () => {
     if (db && id) loadSale();
   }, [db, id]);
 
-  // ── EMI payment recorded → update installment inside sale.emiInstallments ──
   const handleRecordEmiPayment = async ({ amount, mode, payDate, notes }) => {
     const inst = payDialog;
     const instIdx = (sale.emiInstallments || []).findIndex(i => i.installmentNumber === inst.installmentNumber);
@@ -556,7 +546,6 @@ const SaleDetail = () => {
       ...existing,
       paidAmount: newPaid,
       status: newStatus,
-      // CHANGE 2: added recordedByName to each EMI payment entry
       payments: [...(existing.payments || []), {
         amount, mode, payDate, notes,
         recordedAt: new Date().toISOString(),
@@ -576,7 +565,6 @@ const SaleDetail = () => {
     }
   };
 
-  // ── Due date change → update installment inside sale.emiInstallments ──
   const handleChangeDueDate = async ({ newDate, reason }) => {
     const inst = dateDialog;
     const instIdx = (sale.emiInstallments || []).findIndex(i => i.installmentNumber === inst.installmentNumber);
@@ -605,9 +593,7 @@ const SaleDetail = () => {
     }
   };
 
-  // ── Non-EMI partial payment ──
   const handleRecordSalePayment = async ({ amount, mode, payDate, notes }) => {
-    // CHANGE 3: added recordedByName to each non-EMI payment entry
     const newPayment = {
       amount, mode, payDate, notes,
       recordedAt: new Date().toISOString(),
@@ -642,7 +628,6 @@ const SaleDetail = () => {
   const isEMI = sale.paymentType === PAYMENT_TYPES.EMI;
   const canRecordPayment = [PAYMENT_TYPES.PENDING, PAYMENT_TYPES.FINANCE, PAYMENT_TYPES.BANK_TRANSFER].includes(sale.paymentType);
 
-  // EMI stats — read from sale.emiInstallments
   const installments = sale.emiInstallments || [];
   const totalInstAmt = installments.reduce((s, i) => s + i.amount, 0);
   const totalPaid = installments.reduce((s, i) => s + (i.paidAmount || 0), 0);
@@ -650,7 +635,6 @@ const SaleDetail = () => {
   const paidCount = installments.filter(i => getInstallmentStatus(i) === 'paid').length;
   const overdueCount = installments.filter(i => getInstallmentStatus(i) === 'overdue').length;
 
-  // Non-EMI payment stats
   const salePayments = sale.salePayments || [];
   const totalSalePaid = sale.totalPaidAmount || salePayments.reduce((s, p) => s + p.amount, 0);
   const saleBalance = (sale.grandTotal || 0) - totalSalePaid;
@@ -769,7 +753,6 @@ const SaleDetail = () => {
                 </Table>
               </TableContainer>
 
-              {/* Bulk total row */}
               {sale.bulkPrice > 0 && (
                 <Box sx={{
                   mt: 1.5, px: 2, py: 1.5,
@@ -861,6 +844,13 @@ const SaleDetail = () => {
                 <Typography variant="subtitle2" color="text.secondary">Payment Type</Typography>
                 <Chip label={PAYMENT_LABELS[sale.paymentType]} color={getPaymentStatusColor(sale.paymentType)} size="small" sx={{ mt: 0.5 }} />
               </Grid>
+              {/* FIX 1: Display sale-level payment mode */}
+              {sale.paymentMode && (
+                <Grid item xs={12} sm={4}>
+                  <Typography variant="subtitle2" color="text.secondary">Payment Mode</Typography>
+                  <Chip label={sale.paymentMode} size="small" variant="outlined" color="primary" sx={{ mt: 0.5 }} />
+                </Grid>
+              )}
               {sale.financerName && (
                 <Grid item xs={12} sm={4}>
                   <Typography variant="subtitle2" color="text.secondary">Financer / Bank</Typography>
@@ -992,7 +982,6 @@ const SaleDetail = () => {
                           <Box>
                             <Typography variant="body2">{formatDate(p.payDate)} · {p.mode}</Typography>
                             {p.notes && <Typography variant="caption" color="text.secondary">{p.notes}</Typography>}
-                            {/* CHANGE 4a: show who recorded this EMI payment */}
                             {p.recordedByName && (
                               <Typography variant="caption" color="text.secondary" display="block">
                                 Recorded by: <strong>{p.recordedByName}</strong>
@@ -1093,7 +1082,6 @@ const SaleDetail = () => {
                             <Chip label={`#${i + 1}`} size="small" />
                           </Box>
                           {p.notes && <Typography variant="caption" color="text.secondary" display="block">{p.notes}</Typography>}
-                          {/* CHANGE 4b: show who recorded this non-EMI payment */}
                           {p.recordedByName && (
                             <Typography variant="caption" color="text.secondary" display="block">
                               Recorded by: <strong>{p.recordedByName}</strong>

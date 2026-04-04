@@ -5,10 +5,12 @@ import {
   Button, IconButton, CircularProgress, Alert, Divider,
   FormGroup, FormControlLabel, Checkbox, Chip, Stack,
   Autocomplete, Avatar, InputAdornment, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import {
   ArrowBack, Save, Person, Lock, Assignment,
   AttachMoney, CheckCircle, Delete as DeleteIcon,
+  Block, CheckCircleOutline,
 } from '@mui/icons-material';
 import {
   doc, getDoc, updateDoc, serverTimestamp,
@@ -42,6 +44,10 @@ const EmployeeProfile = () => {
   const [checklistTemplates,  setChecklistTemplates]  = useState([]);
   const [assignedChecklists,  setAssignedChecklists]  = useState([]);
 
+  // Disable/enable dialog
+  const [disableDialogOpen, setDisableDialogOpen] = useState(false);
+  const [togglingStatus,    setTogglingStatus]    = useState(false);
+
   useEffect(() => {
     if (!db || !id) return;
     const load = async () => {
@@ -71,7 +77,6 @@ const EmployeeProfile = () => {
         const templates = clSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         setChecklistTemplates(templates);
 
-        // FIX: auto-remove assigned checklists whose template has been deleted
         const activeTemplateIds = new Set(templates.map(t => t.id));
         const filteredChecklists = (data.assignedChecklists || []).filter(
           cl => activeTemplateIds.has(cl.templateId)
@@ -102,9 +107,28 @@ const EmployeeProfile = () => {
     }
   };
 
-  // FIX: unassign a specific checklist template
   const handleUnassignChecklist = (templateId) => {
     setAssignedChecklists(prev => prev.filter(cl => cl.templateId !== templateId));
+  };
+
+  // ── Toggle disabled status ──────────────────────────────────────────────────
+  const handleToggleDisabled = async () => {
+    if (!emp) return;
+    setTogglingStatus(true);
+    try {
+      const newDisabled = !emp.disabled;
+      await updateDoc(doc(db, 'users', id), {
+        disabled:  newDisabled,
+        updatedAt: serverTimestamp(),
+      });
+      setEmp(prev => ({ ...prev, disabled: newDisabled }));
+      toast.success(newDisabled ? 'Employee account disabled.' : 'Employee account re-enabled.');
+      setDisableDialogOpen(false);
+    } catch (e) {
+      toast.error('Failed: ' + e.message);
+    } finally {
+      setTogglingStatus(false);
+    }
   };
 
   const handleSave = async () => {
@@ -143,27 +167,71 @@ const EmployeeProfile = () => {
   if (loading) return <Box display="flex" justifyContent="center" pt={8}><CircularProgress /></Box>;
   if (!emp)    return null;
 
+  const isDisabled = Boolean(emp.disabled);
+
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 900, mx: 'auto' }}>
+
+      {/* ── Disabled banner ── */}
+      {isDisabled && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2, fontWeight: 600 }}
+          icon={<Block />}
+          action={
+            <Button size="small" color="inherit" onClick={() => setDisableDialogOpen(true)}>
+              Re-enable
+            </Button>
+          }
+        >
+          This employee account is <strong>disabled</strong>. They cannot log in.
+        </Alert>
+      )}
+
       {/* Header */}
-      <Box display="flex" alignItems="center" gap={2} mb={3}>
+      <Box display="flex" alignItems="center" gap={2} mb={3} flexWrap="wrap">
         <IconButton onClick={() => navigate('/employees')}><ArrowBack /></IconButton>
-        <Box display="flex" alignItems="center" gap={2} flex={1}>
-          <Avatar sx={{ width: 48, height: 48, bgcolor: 'primary.main', fontSize: 20 }}>
+        <Box display="flex" alignItems="center" gap={2} flex={1} minWidth={0}>
+          <Avatar sx={{ width: 48, height: 48, bgcolor: isDisabled ? 'text.disabled' : 'primary.main', fontSize: 20, flexShrink: 0 }}>
             {(emp.name || '?')[0].toUpperCase()}
           </Avatar>
-          <Box>
-            <Typography variant="h5" fontWeight={700}>{emp.name}</Typography>
-            <Typography variant="body2" color="text.secondary">{emp.email}</Typography>
+          <Box minWidth={0}>
+            <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
+              <Typography variant="h5" fontWeight={700}>{emp.name}</Typography>
+              {isDisabled && (
+                <Chip label="Disabled" color="error" size="small" icon={<Block sx={{ fontSize: '14px !important' }} />} />
+              )}
+            </Box>
+            <Typography variant="body2" color="text.secondary" noWrap>{emp.email}</Typography>
           </Box>
         </Box>
-        <Chip label={emp.role === 'admin' ? 'Admin' : 'Employee'} color={emp.role === 'admin' ? 'error' : 'primary'} size="small" />
+        <Stack direction="row" spacing={1} flexShrink={0}>
+          <Chip
+            label={emp.role === 'admin' ? 'Admin' : 'Employee'}
+            color={emp.role === 'admin' ? 'error' : 'primary'}
+            size="small"
+          />
+          {/* Disable / Enable button — hidden for admins */}
+          {emp.role !== 'admin' && (
+            <Tooltip title={isDisabled ? 'Re-enable this account' : 'Disable this account'}>
+              <Button
+                size="small"
+                variant="outlined"
+                color={isDisabled ? 'success' : 'error'}
+                startIcon={isDisabled ? <CheckCircleOutline /> : <Block />}
+                onClick={() => setDisableDialogOpen(true)}
+              >
+                {isDisabled ? 'Enable' : 'Disable'}
+              </Button>
+            </Tooltip>
+          )}
+        </Stack>
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {/* Profile Details */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3, opacity: isDisabled ? 0.75 : 1 }}>
         <CardContent>
           <Box display="flex" alignItems="center" gap={1} mb={2}>
             <Person color="primary" />
@@ -198,7 +266,7 @@ const EmployeeProfile = () => {
       </Card>
 
       {/* Page Access Control */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3, opacity: isDisabled ? 0.75 : 1 }}>
         <CardContent>
           <Box display="flex" alignItems="center" gap={1} mb={1}>
             <Lock color="warning" />
@@ -249,7 +317,7 @@ const EmployeeProfile = () => {
       </Card>
 
       {/* Assigned Checklists */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3, opacity: isDisabled ? 0.75 : 1 }}>
         <CardContent>
           <Box display="flex" alignItems="center" gap={1} mb={2}>
             <Assignment color="info" />
@@ -317,7 +385,6 @@ const EmployeeProfile = () => {
                         }
                         size="small" variant="outlined" color="info"
                       />
-                      {/* FIX: unassign button */}
                       <Tooltip title="Unassign this checklist">
                         <IconButton
                           size="small"
@@ -346,13 +413,50 @@ const EmployeeProfile = () => {
       </Card>
 
       {/* Save Footer */}
-      <Box display="flex" justifyContent="flex-end" gap={2}>
+      <Box display="flex" justifyContent="flex-end" gap={2} flexWrap="wrap">
         <Button variant="outlined" onClick={() => navigate('/employees')}>Cancel</Button>
         <Button variant="contained" startIcon={saving ? <CircularProgress size={16} /> : <Save />}
           onClick={handleSave} disabled={saving}>
           Save Changes
         </Button>
       </Box>
+
+      {/* ── Disable / Enable Confirmation Dialog ── */}
+      <Dialog open={disableDialogOpen} onClose={() => setDisableDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {isDisabled
+            ? <><CheckCircleOutline color="success" /> Re-enable Account</>
+            : <><Block color="error" /> Disable Account</>
+          }
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {isDisabled
+              ? <>Are you sure you want to <strong>re-enable</strong> <strong>{emp.name}</strong>'s account? They will be able to log in again.</>
+              : <>Are you sure you want to <strong>disable</strong> <strong>{emp.name}</strong>'s account? They will be immediately signed out and blocked from logging in.</>
+            }
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisableDialogOpen(false)} variant="outlined">Cancel</Button>
+          <Button
+            onClick={handleToggleDisabled}
+            variant="contained"
+            color={isDisabled ? 'success' : 'error'}
+            disabled={togglingStatus}
+            startIcon={togglingStatus
+              ? <CircularProgress size={16} />
+              : isDisabled ? <CheckCircleOutline /> : <Block />
+            }
+          >
+            {togglingStatus
+              ? 'Updating…'
+              : isDisabled ? 'Yes, Re-enable' : 'Yes, Disable'
+            }
+          </Button>
+        </DialogActions>
+      </Dialog>
+
     </Box>
   );
 };

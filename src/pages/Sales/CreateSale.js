@@ -29,13 +29,18 @@ import {
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
 
-// CHANGE 1: added description: '' to EMPTY_ITEM
 const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '', hsnCode: '' };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
 };
 const DELIVERY_TYPES = { IMMEDIATE: 'immediate', SCHEDULED: 'scheduled' };
+
+// FIX 3: Round to nearest ₹5
+const roundToNearest5 = val => Math.round(val / 5) * 5;
+
+// FIX 1: Sale-level payment modes
+const SALE_PAYMENT_MODES = ['Cash', 'Card', 'GPay', 'UPI', 'Cheque', 'NEFT / RTGS', 'Other'];
 
 // ─── Quick Add Customer Dialog ────────────────────────────────────────────────
 const NewCustomerDialog = ({ open, onClose, onSave }) => {
@@ -87,7 +92,6 @@ const NewCustomerDialog = ({ open, onClose, onSave }) => {
 };
 
 // ─── Bulk Price Entry Dialog ──────────────────────────────────────────────────
-// One total for all items — no per-item split, shows as "Bulk" label on items
 const BulkPriceDialog = ({ open, onClose, currentBulk, onApply, onClear }) => {
   const [bulkTotal, setBulkTotal] = useState('');
 
@@ -178,7 +182,7 @@ const CreateSale = () => {
   const [notes, setNotes] = useState('');
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [bulkEntryOpen, setBulkEntryOpen] = useState(false);
-  const [bulkPrice, setBulkPrice] = useState(0); // 0 = not set; >0 = bulk total overrides per-item prices
+  const [bulkPrice, setBulkPrice] = useState(0);
 
   const [hasExchange, setHasExchange] = useState(false);
   const [exchangeItem, setExchangeItem] = useState('');
@@ -186,6 +190,8 @@ const CreateSale = () => {
   const [exchangeReceived, setExchangeReceived] = useState(false);
 
   const [paymentType, setPaymentType] = useState(PAYMENT_TYPES.FULL);
+  // FIX 1: payment mode state
+  const [paymentMode, setPaymentMode] = useState('Cash');
   const [downPayment, setDownPayment] = useState(0);
   const [emiMonths, setEmiMonths] = useState(0);
   const [emiStartDate, setEmiStartDate] = useState('');
@@ -238,6 +244,8 @@ const CreateSale = () => {
       setExchangeValue(d.exchangeValue || 0);
       setExchangeReceived(d.exchangeReceived || false);
       setPaymentType(d.paymentType || PAYMENT_TYPES.FULL);
+      // FIX 1: load paymentMode
+      setPaymentMode(d.paymentMode || 'Cash');
       setDownPayment(d.downPayment || 0);
       setEmiMonths(d.emiMonths || 0);
       setEmiStartDate(d.emiStartDate || '');
@@ -252,7 +260,6 @@ const CreateSale = () => {
     }
   };
 
-  // Clear payment fields when payment type changes (only after initial load)
   const handlePaymentTypeChange = (newType) => {
     if (dataLoadedRef.current && newType !== paymentType) {
       setDownPayment(0);
@@ -275,9 +282,7 @@ const CreateSale = () => {
           arr[idx].price = prod.price;
           arr[idx].gstRate = prod.gstRate || 18;
           arr[idx].unit = prod.unit || 'pcs';
-          // CHANGE 2: auto-populate description from product
           arr[idx].description = prod.description || '';
-          // CHANGE B: auto-populate hsnCode from product
           arr[idx].hsnCode = prod.hsnCode || '';
           const stock = inventory[val] || 0;
           if (stock <= 0) toast.warning(`⚠️ ${prod.name} is OUT OF STOCK!`);
@@ -313,15 +318,14 @@ const CreateSale = () => {
     return { ...it, subtotal, ...gst };
   });
 
-  // If bulkPrice is set, it overrides the sum of per-item subtotals
   const subtotal = bulkPrice > 0 ? bulkPrice : itemsWithCalc.reduce((s, it) => s + it.subtotal, 0);
   const totalTax = bulkPrice > 0 ? 0 : itemsWithCalc.reduce((s, it) => s + (it.totalTax || 0), 0);
   const exchangeDeduction = hasExchange ? (parseFloat(exchangeValue) || 0) : 0;
-  const grandTotal = subtotal - exchangeDeduction;
+  // FIX 3: Round grand total to nearest ₹5
+  const grandTotal = roundToNearest5(subtotal - exchangeDeduction);
   const balanceDue = grandTotal - (parseFloat(downPayment) || 0);
   const emiAmount = emiMonths > 0 ? parseFloat((balanceDue / emiMonths).toFixed(2)) : 0;
 
-  // Build EMI installments array (stored inside sale doc now)
   const buildEmiInstallments = () => {
     if (paymentType !== PAYMENT_TYPES.EMI || emiMonths <= 0 || !emiStartDate) return [];
     const result = [];
@@ -357,7 +361,6 @@ const CreateSale = () => {
     customerName: selectedCustomer.name,
     customerPhone: selectedCustomer.phone,
     salesperson, saleDate,
-    // CHANGE 4: description saved per item
     items: itemsWithCalc.map(it => ({
       productId: it.productId, productName: it.productName,
       qty: parseFloat(it.qty), price: parseFloat(it.price),
@@ -370,6 +373,8 @@ const CreateSale = () => {
     subtotal, totalTax, grandTotal,
     hasExchange, exchangeItem, exchangeValue: exchangeDeduction, exchangeReceived,
     paymentType,
+    // FIX 1: save paymentMode
+    paymentMode,
     downPayment: parseFloat(downPayment) || 0,
     emiMonths: parseInt(emiMonths) || 0,
     emiAmount,
@@ -382,60 +387,119 @@ const CreateSale = () => {
   });
 
   const handleSave = async () => {
-  setError('');
-  if (!companyId) { setError('Please select a company / firm'); return; }
-  if (!selectedCustomer) { setError('Please select a customer'); return; }
-  if (items.some(it => !it.productId)) { setError('Please select a product for every item'); return; }
-  if (items.some(it => (parseFloat(it.qty) || 0) <= 0)) { setError('Quantity must be greater than 0'); return; }
-  if (paymentType === PAYMENT_TYPES.EMI && (!downPayment || !emiMonths || !emiStartDate)) {
-    setError('EMI requires down payment, number of months, and start date'); return;
-  }
-  if ((paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (!downPayment || !financerName || !paymentRef)) {
-    setError('Finance / Bank Transfer requires down payment, financer name, and payment reference'); return;
-  }
-  if (deliveryType === DELIVERY_TYPES.SCHEDULED && !deliveryDate) {
-    setError('Please set a delivery date for scheduled delivery'); return;
-  }
+    setError('');
+    if (!companyId) { setError('Please select a company / firm'); return; }
+    if (!selectedCustomer) { setError('Please select a customer'); return; }
+    if (items.some(it => !it.productId)) { setError('Please select a product for every item'); return; }
+    if (items.some(it => (parseFloat(it.qty) || 0) <= 0)) { setError('Quantity must be greater than 0'); return; }
+    // FIX 2: 0 down payment allowed — only require emiMonths and emiStartDate for EMI
+    if (paymentType === PAYMENT_TYPES.EMI && (!emiMonths || !emiStartDate)) {
+      setError('EMI requires number of months and start date'); return;
+    }
+    // FIX 2: 0 down payment allowed — only require financer name and payment ref
+    if ((paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (!financerName || !paymentRef)) {
+      setError('Finance / Bank Transfer requires financer name and payment reference'); return;
+    }
+    if (deliveryType === DELIVERY_TYPES.SCHEDULED && !deliveryDate) {
+      setError('Please set a delivery date for scheduled delivery'); return;
+    }
 
-  setSaving(true);
-  try {
-    const company = COMPANIES[companyId];
-    let invoiceNumber;
+    setSaving(true);
+    try {
+      const company = COMPANIES[companyId];
+      let invoiceNumber;
 
-    if (isEdit) {
-      const existingSnap = await getDoc(doc(db, 'sales', id));
-      const existingData = existingSnap.data();
-      invoiceNumber = existingData.invoiceNumber;
-      const prevPaymentType = existingData.paymentType;
+      if (isEdit) {
+        const existingSnap = await getDoc(doc(db, 'sales', id));
+        const existingData = existingSnap.data();
+        invoiceNumber = existingData.invoiceNumber;
+        const prevPaymentType = existingData.paymentType;
 
-      // ── Determine EMI installments ──
-      let emiInstallments;
-      if (paymentType === PAYMENT_TYPES.EMI) {
-        const prevInstallments = existingData.emiInstallments || [];
-        const configChanged =
-          parseInt(emiMonths) !== (existingData.emiMonths || 0) ||
-          emiStartDate !== (existingData.emiStartDate || '') ||
-          Math.abs(emiAmount - (existingData.emiAmount || 0)) > 0.01;
+        let emiInstallments;
+        if (paymentType === PAYMENT_TYPES.EMI) {
+          const prevInstallments = existingData.emiInstallments || [];
+          const configChanged =
+            parseInt(emiMonths) !== (existingData.emiMonths || 0) ||
+            emiStartDate !== (existingData.emiStartDate || '') ||
+            Math.abs(emiAmount - (existingData.emiAmount || 0)) > 0.01;
 
-        if (prevPaymentType === PAYMENT_TYPES.EMI && !configChanged && prevInstallments.length > 0) {
-          emiInstallments = prevInstallments;
+          if (prevPaymentType === PAYMENT_TYPES.EMI && !configChanged && prevInstallments.length > 0) {
+            emiInstallments = prevInstallments;
+          } else {
+            emiInstallments = buildEmiInstallments();
+          }
         } else {
-          emiInstallments = buildEmiInstallments();
+          emiInstallments = [];
         }
-      } else {
-        emiInstallments = [];
-      }
 
-      // ── Reset sale-level payments if payment type changed ──
-      let paymentReset = {};
-      if (prevPaymentType !== paymentType) {
-        const resetInitialPayments = [];
-        let resetInitialPaid = 0;
+        let paymentReset = {};
+        if (prevPaymentType !== paymentType) {
+          const resetInitialPayments = [];
+          let resetInitialPaid = 0;
+          if (
+            (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
+            downPayment > 0
+          ) {
+            resetInitialPayments.push({
+              amount: parseFloat(downPayment),
+              mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
+              payDate: saleDate,
+              notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
+              recordedAt: new Date().toISOString(),
+              isDownPayment: true,
+              recordedByUid: user?.uid || '',
+              recordedByName: userProfile?.name || user?.email || 'System',
+            });
+            resetInitialPaid = parseFloat(downPayment);
+          }
+          const resetStatus =
+            paymentType === PAYMENT_TYPES.FULL
+              ? 'paid'
+              : resetInitialPaid >= grandTotal
+              ? 'paid'
+              : resetInitialPaid > 0
+              ? 'partial'
+              : 'unpaid';
+          paymentReset = {
+            salePayments: resetInitialPayments,
+            totalPaidAmount: resetInitialPaid,
+            paymentStatus: resetStatus,
+          };
+        }
+
+        const saleData = buildSaleData(invoiceNumber, company);
+
+        await updateDoc(doc(db, 'sales', id), {
+          ...saleData,
+          emiInstallments,
+          ...paymentReset,
+          updatedAt: serverTimestamp(),
+        });
+
+        await applyInventoryDeltas(
+          db,
+          existingData.items || [],
+          itemsWithCalc,
+          'sale'
+        );
+
+        toast.success('Sale updated!');
+      } else {
+        invoiceNumber = generateInvoiceNumber(
+          company?.code || 'INV',
+          (await getCountFromServer(collection(db, 'sales'))).data().count
+        );
+
+        const saleData = buildSaleData(invoiceNumber, company);
+        const emiInstallments = buildEmiInstallments();
+
+        const initialSalePayments = [];
+        let initialTotalPaid = 0;
         if (
           (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
           downPayment > 0
         ) {
-          resetInitialPayments.push({
+          initialSalePayments.push({
             amount: parseFloat(downPayment),
             mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
             payDate: saleDate,
@@ -445,109 +509,42 @@ const CreateSale = () => {
             recordedByUid: user?.uid || '',
             recordedByName: userProfile?.name || user?.email || 'System',
           });
-          resetInitialPaid = parseFloat(downPayment);
+          initialTotalPaid = parseFloat(downPayment);
         }
-        const resetStatus =
+
+        const initialPaymentStatus =
           paymentType === PAYMENT_TYPES.FULL
             ? 'paid'
-            : resetInitialPaid >= grandTotal
+            : initialTotalPaid >= grandTotal
             ? 'paid'
-            : resetInitialPaid > 0
+            : initialTotalPaid > 0
             ? 'partial'
             : 'unpaid';
-        paymentReset = {
-          salePayments: resetInitialPayments,
-          totalPaidAmount: resetInitialPaid,
-          paymentStatus: resetStatus,
-        };
-      }
 
-      // ── Build saleData (same as before) ──
-      const saleData = buildSaleData(invoiceNumber, company);
-
-      await updateDoc(doc(db, 'sales', id), {
-        ...saleData,
-        emiInstallments,
-        ...paymentReset,
-        updatedAt: serverTimestamp(),
-      });
-
-      // ── FIX: Reconcile inventory using pure delta (newQty − oldQty) ──
-      // existingData.items = what was saved before this edit
-      // itemsWithCalc        = what the user is saving now
-      await applyInventoryDeltas(
-        db,
-        existingData.items || [],   // old items (from Firestore)
-        itemsWithCalc,              // new items (current form state)
-        'sale'
-      );
-
-      toast.success('Sale updated!');
-    } else {
-      invoiceNumber = generateInvoiceNumber(
-        company?.code || 'INV',
-        (await getCountFromServer(collection(db, 'sales'))).data().count
-      );
-
-      const saleData = buildSaleData(invoiceNumber, company);
-      const emiInstallments = buildEmiInstallments();
-
-      const initialSalePayments = [];
-      let initialTotalPaid = 0;
-      if (
-        (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
-        downPayment > 0
-      ) {
-        initialSalePayments.push({
-          amount: parseFloat(downPayment),
-          mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
-          payDate: saleDate,
-          notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
-          recordedAt: new Date().toISOString(),
-          isDownPayment: true,
-          recordedByUid: user?.uid || '',
-          recordedByName: userProfile?.name || user?.email || 'System',
+        await addDoc(collection(db, 'sales'), {
+          ...saleData,
+          emiInstallments,
+          salePayments: initialSalePayments,
+          totalPaidAmount: initialTotalPaid,
+          paymentStatus: initialPaymentStatus,
+          createdAt: serverTimestamp(),
         });
-        initialTotalPaid = parseFloat(downPayment);
+
+        await applyNewSaleInventory(db, itemsWithCalc);
+
+        toast.success('Sale recorded successfully!');
       }
 
-      const initialPaymentStatus =
-        paymentType === PAYMENT_TYPES.FULL
-          ? 'paid'
-          : initialTotalPaid >= grandTotal
-          ? 'paid'
-          : initialTotalPaid > 0
-          ? 'partial'
-          : 'unpaid';
-
-      await addDoc(collection(db, 'sales'), {
-        ...saleData,
-        emiInstallments,
-        salePayments: initialSalePayments,
-        totalPaidAmount: initialTotalPaid,
-        paymentStatus: initialPaymentStatus,
-        createdAt: serverTimestamp(),
-      });
-
-      // ── Deduct inventory for new sale ──
-      await applyNewSaleInventory(db, itemsWithCalc);
-
-      toast.success('Sale recorded successfully!');
+      navigate('/sales');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
     }
-
-    navigate('/sales');
-  } catch (e) {
-    setError(e.message);
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   if (loading) return <Box display="flex" justifyContent="center" pt={8}><CircularProgress /></Box>;
 
-  // ── Column sizing: gives each field its own column, no overflow ──
-  // With GST:    Product(4) | Qty(1) | Price(2) | GST(2) | Amount(2) | Del(1) = 12
-  // Without GST: Product(5) | Qty(2) | Price(2)          | Amount(2) | Del(1) = 12
   const withGST = invoiceType === 'gst';
 
   return (
@@ -676,29 +673,6 @@ const CreateSale = () => {
               >
                 <Grid container spacing={1} alignItems="center">
                   {/* Product */}
-                  {/* <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Product *</InputLabel>
-                      <Select
-                        value={item.productId}
-                        onChange={e => setItemField(idx, 'productId')(e.target.value)}
-                        label="Product *"
-                      >
-                        {products.map(p => (
-                          <MenuItem key={p.id} value={p.id}>
-                            <Box>
-                              <Typography variant="body2">{p.name}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {formatCurrency(p.price)} · Stock: {inventory[p.id] || 0}
-                              </Typography>
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Grid> */}
-
-                  {/* Product */}
                   <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
                     <Autocomplete
                       fullWidth
@@ -785,7 +759,7 @@ const CreateSale = () => {
                     </Box>
                   </Grid>
 
-                  {/* CHANGE 3: Description field — full width, below the product row, editable */}
+                  {/* Description field */}
                   <Grid item xs={12}>
                     <TextField
                       fullWidth
@@ -891,6 +865,17 @@ const CreateSale = () => {
       <Card sx={{ mb: 2 }}>
         <CardContent>
           <Typography variant="subtitle1" fontWeight={700} mb={2}>Payment</Typography>
+
+          {/* FIX 1: Payment Mode selector — always visible */}
+          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+            <InputLabel>Payment Mode</InputLabel>
+            <Select value={paymentMode} onChange={e => setPaymentMode(e.target.value)} label="Payment Mode">
+              {SALE_PAYMENT_MODES.map(m => (
+                <MenuItem key={m} value={m}>{m}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
           <FormControl component="fieldset" fullWidth>
             <RadioGroup value={paymentType} onChange={e => handlePaymentTypeChange(e.target.value)}>
               <Grid container spacing={1}>
@@ -921,9 +906,10 @@ const CreateSale = () => {
           {(paymentType === PAYMENT_TYPES.EMI || paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) && (
             <Grid container spacing={2} mt={1}>
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth label="Down Payment (₹) *" type="number" value={downPayment}
+                <TextField fullWidth label="Down Payment (₹)" type="number" value={downPayment}
                   onChange={e => setDownPayment(parseFloat(e.target.value) || 0)} size="small"
-                  InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }} />
+                  InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+                  helperText="Optional — enter 0 if no down payment" />
               </Grid>
 
               {paymentType === PAYMENT_TYPES.EMI && (
@@ -1027,6 +1013,10 @@ const CreateSale = () => {
               </>
             )}
             <Divider />
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="body2" color="text.secondary">Payment Mode</Typography>
+              <Chip label={paymentMode} size="small" variant="outlined" color="primary" />
+            </Box>
             <Box display="flex" justifyContent="space-between" alignItems="center">
               <Typography variant="body2" color="text.secondary">Delivery</Typography>
               {deliveryType === DELIVERY_TYPES.IMMEDIATE
