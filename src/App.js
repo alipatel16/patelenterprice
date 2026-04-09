@@ -28,6 +28,7 @@ import CreateGiftInvoice from './pages/Gifts/CreateGiftInvoice';
 import GiftInvoiceDetail from './pages/Gifts/GiftInvoiceDetail';
 import GiftSetList from './pages/Gifts/GiftSetList';
 import GiftSetForm from './pages/Gifts/GiftSetForm';
+import ProductMovementReport from './pages/Sales/ProductMovementReport';
 
 // Complaints
 import ComplaintList from './pages/Complaints/ComplaintList';
@@ -87,6 +88,7 @@ const AppContent = () => {
           <Route path="exchange-tracking" element={<ExchangeTracking />} />
           <Route path="emi-dues"          element={<EmiDues />} />
           <Route path="employee-sales-report" element={<EmployeeSalesReport />} />
+          <Route path="product-movement" element={<ProductMovementReport />} />
 
           {/* Quotations */}
           <Route path="quotations"          element={<QuotationsList />} />

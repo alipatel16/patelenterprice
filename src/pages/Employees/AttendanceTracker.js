@@ -572,7 +572,14 @@ const AttendanceMonthlyView = ({ db }) => {
                               <Tooltip
                                 title={
                                   log
-                                    ? `${formatTime(log.loginTime)} – ${log.logoutTime ? formatTime(log.logoutTime) : 'Active'}${log.autoFilledLogout ? ' (auto-filled)' : ''}`
+                                    ? [
+                                        `${formatTime(log.loginTime)} – ${log.logoutTime ? formatTime(log.logoutTime) : 'Active'}${log.autoFilledLogout ? ' (auto-filled)' : ''}`,
+                                        ...(log.breaks?.length > 0
+                                          ? log.breaks.map((b, i) =>
+                                              `Break ${i + 1}: ${formatTime(b.startTime)} – ${b.endTime ? formatTime(b.endTime) : 'Active'}`
+                                            )
+                                          : [])
+                                      ].join('\n')
                                     : ''
                                 }>
                                 <Typography variant="caption" fontWeight={700} color={text}

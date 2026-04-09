@@ -6,7 +6,7 @@ import {
   DialogContent, DialogActions, MenuItem, Select, FormControl,
   InputLabel, Stack, Collapse,
 } from '@mui/material';
-import { Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule, DateRange, Clear } from '@mui/icons-material';
+import { Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule, DateRange, Clear, ShowChart } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
   deleteDoc, doc, getDoc,
@@ -117,16 +117,8 @@ const SalesList = () => {
   // Build Firestore date constraints from dateFrom/dateTo
   const buildDateConstraints = () => {
     const c = [];
-    if (dateFrom) {
-      const start = new Date(dateFrom);
-      start.setHours(0, 0, 0, 0);
-      c.push(where('createdAt', '>=', Timestamp.fromDate(start)));
-    }
-    if (dateTo) {
-      const end = new Date(dateTo);
-      end.setHours(23, 59, 59, 999);
-      c.push(where('createdAt', '<=', Timestamp.fromDate(end)));
-    }
+    if (dateFrom) c.push(where('saleDate', '>=', dateFrom));
+    if (dateTo)   c.push(where('saleDate', '<=', dateTo));
     return c;
   };
 
@@ -147,7 +139,9 @@ const SalesList = () => {
 
         // When date range is active we order by createdAt asc/desc;
         // Firestore requires the orderBy field to match inequality filters.
-        const orderConstraint = orderBy('createdAt', 'desc');
+        const orderConstraint = (dateFrom || dateTo)
+              ? orderBy('saleDate', 'desc')
+              : orderBy('createdAt', 'desc');
 
         const constraints = [orderConstraint, ...allWhereConstraints, limit(PAGE_SIZE)];
         if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
@@ -228,6 +222,9 @@ const SalesList = () => {
             color={activeFilterCount > 0 ? 'primary' : 'inherit'}
           >
             Filters {activeFilterCount > 0 ? `(${activeFilterCount})` : ''}
+          </Button>
+          <Button variant="outlined" startIcon={<ShowChart />} onClick={() => navigate('/product-movement')}>
+            {isMobile ? 'Movement' : 'Movement Report'}
           </Button>
           <Button variant="contained" startIcon={<Add />} onClick={() => navigate('/sales/new')}>
             New Sale
