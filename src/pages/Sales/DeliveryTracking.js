@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Box, Typography, Card, CardContent, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination, Chip, IconButton,
@@ -11,19 +11,14 @@ import {
   DoneAll, CalendarMonth,
 } from '@mui/icons-material';
 import {
-  collection, query, orderBy, limit, startAfter,
+  collection, query, orderBy, limit,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { formatCurrency, formatDate, debounce } from '../../utils';
+import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
-
-// Estimate total rows for pagination without getCountFromServer
-// If a full page came back, signal "at least one more page"; otherwise we're on the last page
-const estimateTotal = (page, snapSize, pageSize) =>
-  snapSize < pageSize ? page * pageSize + snapSize : (page + 2) * pageSize;
 
 const PAGE_SIZE = 10;
 
@@ -89,52 +84,74 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
+  // ── All pending delivery docs fetched once ──────────────────────────────
+  const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // ── UI state ────────────────────────────────────────────────────────────
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [cursorMap, setCursorMap] = useState({});
   const [markDialog, setMarkDialog] = useState(null);
-  const debounceRef = useRef(debounce(v => { setDebouncedSearch(v); setPage(0); setCursorMap({}); }, 400));
+  const searchTimer = useRef(null);
 
-  const handleSearch = (v) => { setSearch(v); debounceRef.current(v); };
-
-  const fetchData = async () => {
-    if (!db) return;
-    setLoading(true);
-    let active = true;
-    try {
-      // orderBy only — no composite index needed, filter client-side
-      const cursor = page > 0 ? cursorMap[page - 1] : null;
-      const snap = await getDocs(query(
-        collection(db, 'sales'),
-        orderBy('saleDate', 'desc'),
-        ...(cursor ? [startAfter(cursor)] : []),
-        limit(PAGE_SIZE * 5),
-      ));
-
-      if (!active) return;
-      const docs = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(d => d.deliveryType === 'scheduled' && d.isDelivered !== true)
-        .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
-
-      setRows(docs);
-      setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
-      setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
-    } catch (err) {
-      if (!active) return;
-      console.error('[DeliveryTracking] fetchData error:', err);
-      toast.error('Failed to load deliveries: ' + err.message);
-    } finally {
-      if (active) setLoading(false);
-    }
-    return () => { active = false; };
+  const handleSearch = (v) => {
+    setSearch(v);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(v);
+      setPage(0);
+    }, 400);
   };
 
-  useEffect(() => { fetchData(); }, [db, page, debouncedSearch]);
+  // ── Fetch all scheduled+undelivered sales once ──────────────────────────
+  // These are operational records — typically 10-30 items at most.
+  // Fetching all at once and paginating in memory gives correct pagination.
+  useEffect(() => {
+    if (!db) return;
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'sales'),
+          orderBy('saleDate', 'desc'),
+          limit(500),
+        ));
+        if (!active) return;
+        const filtered = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(d => d.deliveryType === 'scheduled' && d.isDelivered !== true)
+          .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
+        setAllDocs(filtered);
+      } catch (err) {
+        if (!active) return;
+        toast.error('Failed to load deliveries: ' + err.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [db, refreshKey]);
+
+  // ── Search filter — zero extra reads ───────────────────────────────────
+  const filtered = useMemo(() => {
+    if (!debouncedSearch.trim()) return allDocs;
+    const s = debouncedSearch.toLowerCase();
+    return allDocs.filter(d =>
+      (d.invoiceNumber || '').toLowerCase().includes(s) ||
+      (d.customerName || '').toLowerCase().includes(s) ||
+      (d.customerPhone || '').includes(s)
+    );
+  }, [allDocs, debouncedSearch]);
+
+  // ── Paginated slice — correct total and page ────────────────────────────
+  const pageRows = useMemo(
+    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filtered, page]
+  );
 
   const handleMarkDelivered = async (deliveredDate) => {
     await updateDoc(doc(db, 'sales', markDialog.id), {
@@ -144,9 +161,9 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
       updatedAt: serverTimestamp(),
     });
     toast.success('Delivery marked as completed!');
-    setCursorMap({});
+    setMarkDialog(null);
     setPage(0);
-    fetchData();
+    setRefreshKey(k => k + 1);
     onDelivered();
   };
 
@@ -192,7 +209,7 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
                       ))}
                     </TableRow>
                   ))
-                : rows.length === 0
+                : pageRows.length === 0
                   ? (
                     <TableRow>
                       <TableCell colSpan={isMobile ? 3 : 5} align="center" sx={{ py: 6 }}>
@@ -203,7 +220,7 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
                       </TableCell>
                     </TableRow>
                   )
-                  : rows.map(row => {
+                  : pageRows.map(row => {
                     const overdue = isOverdue(row.deliveryDate);
                     return (
                       <TableRow key={row.id} hover
@@ -271,7 +288,7 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
         </TableContainer>
         <TablePagination
           component="div"
-          count={total}
+          count={filtered.length}
           page={page}
           rowsPerPage={PAGE_SIZE}
           onPageChange={(_, p) => setPage(p)}
@@ -296,33 +313,30 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
+  // ── All delivered docs fetched once ────────────────────────────────────
+  const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [cursorMap, setCursorMap] = useState({});
 
   useEffect(() => {
     if (!db) return;
     let active = true;
     setLoading(true);
 
-    const run = async () => {
+    const load = async () => {
       try {
-        const cursor = page > 0 ? cursorMap[page - 1] : null;
         const snap = await getDocs(query(
           collection(db, 'sales'),
           orderBy('saleDate', 'desc'),
-          ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE * 5),
+          limit(500),
         ));
         if (!active) return;
-        const deliveredDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        const deliveredDocs = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
           .filter(d => d.isDelivered === true)
           .sort((a, b) => (b.actualDeliveryDate || '').localeCompare(a.actualDeliveryDate || ''));
-        setRows(deliveredDocs);
-        setTotal(estimateTotal(page, deliveredDocs.length, PAGE_SIZE));
-        setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
+        setAllDocs(deliveredDocs);
+        setPage(0);
       } catch (err) {
         if (!active) return;
         toast.error('Failed to load delivered items');
@@ -331,9 +345,14 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
       }
     };
 
-    run();
+    load();
     return () => { active = false; };
-  }, [db, page, refresh]);
+  }, [db, refresh]);
+
+  const pageRows = useMemo(
+    () => allDocs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [allDocs, page]
+  );
 
   return (
     <Card>
@@ -356,7 +375,7 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
                     ))}
                   </TableRow>
                 ))
-              : rows.length === 0
+              : pageRows.length === 0
                 ? (
                   <TableRow>
                     <TableCell colSpan={isMobile ? 2 : 4} align="center" sx={{ py: 6 }}>
@@ -364,7 +383,7 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
                     </TableCell>
                   </TableRow>
                 )
-                : rows.map(row => (
+                : pageRows.map(row => (
                   <TableRow key={row.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/sales/${row.id}`)}>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
@@ -398,7 +417,7 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
       </TableContainer>
       <TablePagination
         component="div"
-        count={total}
+        count={allDocs.length}
         page={page}
         rowsPerPage={PAGE_SIZE}
         onPageChange={(_, p) => setPage(p)}
@@ -438,16 +457,8 @@ const DeliveryTracking = () => {
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 0 }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-          <Tab
-            icon={<Schedule fontSize="small" />}
-            iconPosition="start"
-            label="Pending Deliveries"
-          />
-          <Tab
-            icon={<DoneAll fontSize="small" />}
-            iconPosition="start"
-            label="Delivered"
-          />
+          <Tab icon={<Schedule fontSize="small" />} iconPosition="start" label="Pending Deliveries" />
+          <Tab icon={<DoneAll fontSize="small" />} iconPosition="start" label="Delivered" />
         </Tabs>
       </Box>
 

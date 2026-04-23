@@ -442,7 +442,7 @@ const ProductMovementReport = () => {
                 <TableCell sx={{ width: 48, fontWeight: 700 }}>#</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{isMobile ? 'Sold' : 'Units Sold'}</TableCell>
-                {!isMobile && <TableCell sx={{ fontWeight: 700 }}>Revenue</TableCell>}
+                {/* {!isMobile && <TableCell sx={{ fontWeight: 700 }}>Revenue</TableCell>} */}
                 {!isMobile && <TableCell sx={{ fontWeight: 700 }}>In Stock</TableCell>}
                 {!isMobile && <TableCell sx={{ fontWeight: 700 }}>Purchased</TableCell>}
                 <TableCell sx={{ fontWeight: 700 }}>Movement</TableCell>
@@ -506,11 +506,11 @@ const ProductMovementReport = () => {
                       {/* Product name */}
                       <TableCell>
                         <Typography variant="body2" fontWeight={600}>{row.productName}</Typography>
-                        {isMobile && (
+                        {/* {isMobile && (
                           <Typography variant="caption" color="text.secondary">
                             Stock: {row.stock} · {formatCurrency(row.revenue)}
                           </Typography>
-                        )}
+                        )} */}
                       </TableCell>
 
                       {/* Sold qty bar */}
@@ -518,14 +518,14 @@ const ProductMovementReport = () => {
                         <SoldBar value={row.soldQty} max={maxSold} />
                       </TableCell>
 
-                      {/* Revenue */}
+                      {/* Revenue
                       {!isMobile && (
                         <TableCell>
                           <Typography variant="body2" color="success.main" fontWeight={600}>
                             {formatCurrency(row.revenue)}
                           </Typography>
                         </TableCell>
-                      )}
+                      )} */}
 
                       {/* Stock */}
                       {!isMobile && (

@@ -20,6 +20,9 @@ import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
 const TODAY = new Date().toISOString().split('T')[0];
+const _sd = new Date();
+_sd.setDate(_sd.getDate() + 7);
+const SEVEN_DAYS = _sd.toISOString().split('T')[0];
 const PAGE_SIZE = 25; // sales loaded per batch
 
 // ─── Classify an installment ────────────────────────────────────────────────
@@ -331,14 +334,14 @@ const EmiDues = () => {
 
   const overdue  = sortByDate(filtered.filter(i => i.status === 'overdue'));
   const today    = sortByDate(filtered.filter(i => i.status === 'today'));
-  const upcoming = sortByDate(filtered.filter(i => i.status === 'upcoming'));
+  const upcoming = sortByDate(filtered.filter(i => i.status === 'upcoming' && i.inst.dueDate <= SEVEN_DAYS));
 
   const totalDue = filtered.reduce((s, i) => s + (i.inst.amount - (i.inst.paidAmount || 0)), 0);
 
   // ── Summary counts ──
   const totalOverdue  = dueItems.filter(i => i.status === 'overdue').length;
   const totalToday    = dueItems.filter(i => i.status === 'today').length;
-  const totalUpcoming = dueItems.filter(i => i.status === 'upcoming').length;
+  const totalUpcoming = dueItems.filter(i => i.status === 'upcoming' && i.inst.dueDate <= SEVEN_DAYS).length;
 
   if (loading) return (
     <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">

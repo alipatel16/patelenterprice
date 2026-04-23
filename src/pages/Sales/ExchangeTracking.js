@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TablePagination, Chip, 
+  TableContainer, TableHead, TableRow, TablePagination, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   TextField, Stack, Alert, CircularProgress, Tab, Tabs,
   InputAdornment, Tooltip,
@@ -10,19 +10,14 @@ import {
   SwapHoriz, CheckCircle, Search, Refresh, DoneAll, Inbox,
 } from '@mui/icons-material';
 import {
-  collection, query, orderBy, limit, startAfter,
+  collection, query, orderBy, limit,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { formatCurrency, formatDate, debounce } from '../../utils';
+import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
-
-// Estimate total rows for pagination without getCountFromServer
-// If a full page came back, signal "at least one more page"; otherwise we're on the last page
-const estimateTotal = (page, snapSize, pageSize) =>
-  snapSize < pageSize ? page * pageSize + snapSize : (page + 2) * pageSize;
 
 const PAGE_SIZE = 10;
 
@@ -71,23 +66,14 @@ const MarkReceivedDialog = ({ open, onClose, sale, onConfirm }) => {
         </Box>
         <Stack spacing={2}>
           <TextField
-            fullWidth
-            label="Date Received *"
-            type="date"
-            value={receivedDate}
-            onChange={e => setReceivedDate(e.target.value)}
-            size="small"
-            InputLabelProps={{ shrink: true }}
+            fullWidth label="Date Received *" type="date"
+            value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
+            size="small" InputLabelProps={{ shrink: true }}
           />
           <TextField
-            fullWidth
-            label="Notes (optional)"
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            size="small"
-            multiline
-            rows={2}
-            placeholder="Condition of exchange item, remarks..."
+            fullWidth label="Notes (optional)" value={notes}
+            onChange={e => setNotes(e.target.value)} size="small"
+            multiline rows={2} placeholder="Condition of exchange item, remarks..."
           />
         </Stack>
       </DialogContent>
@@ -109,62 +95,73 @@ const PendingExchangeTab = ({ db, onReceived }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
+  // ── All pending exchange docs fetched once ──────────────────────────────
+  const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // ── UI state ────────────────────────────────────────────────────────────
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [cursorMap, setCursorMap] = useState({});
   const [markDialog, setMarkDialog] = useState(null);
-  const debounceRef = useRef(debounce(v => { setDebouncedSearch(v); setPage(0); setCursorMap({}); }, 400));
+  const searchTimer = useRef(null);
 
-  const handleSearch = (v) => { setSearch(v); debounceRef.current(v); };
-
-  const fetchData = async () => {
-    if (!db) return;
-    setLoading(true);
-    let active = true;
-    try {
-      const cursor = page > 0 ? cursorMap[page - 1] : null;
-
-      // Single where clause — no composite index needed. Filter exchangeReceived client-side.
-      const snap = await getDocs(query(
-        collection(db, 'sales'),
-        orderBy('saleDate', 'desc'),
-        ...(cursor ? [startAfter(cursor)] : []),
-        limit(PAGE_SIZE * 5),
-      ));
-
-      if (!active) return;
-
-      let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .filter(d => d.hasExchange === true && d.exchangeReceived !== true);
-
-      // Client-side search filter
-      if (debouncedSearch) {
-        const s = debouncedSearch.toLowerCase();
-        docs = docs.filter(d =>
-          (d.invoiceNumber || '').toLowerCase().includes(s) ||
-          (d.customerName || '').toLowerCase().includes(s) ||
-          (d.exchangeItem || '').toLowerCase().includes(s)
-        );
-      }
-
-      setRows(docs);
-      setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
-      setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
-    } catch (err) {
-      if (!active) return;
-      console.error('[ExchangeTracking] fetchData error:', err);
-      toast.error('Failed to load exchange items: ' + err.message);
-    } finally {
-      if (active) setLoading(false);
-    }
-    return () => { active = false; };
+  const handleSearch = (v) => {
+    setSearch(v);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(v);
+      setPage(0);
+    }, 400);
   };
 
-  useEffect(() => { fetchData(); }, [db, page, debouncedSearch]);
+  // ── Fetch all pending exchange sales once ───────────────────────────────
+  // Pending exchanges are typically very few (5–20 at a time).
+  // Fetching all and paginating in memory gives correct results.
+  useEffect(() => {
+    if (!db) return;
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'sales'),
+          orderBy('saleDate', 'desc'),
+          limit(500),
+        ));
+        if (!active) return;
+        const filtered = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(d => d.hasExchange === true && d.exchangeReceived !== true);
+        setAllDocs(filtered);
+      } catch (err) {
+        if (!active) return;
+        toast.error('Failed to load exchange items: ' + err.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [db, refreshKey]);
+
+  // ── Search filter — zero extra reads ───────────────────────────────────
+  const filtered = useMemo(() => {
+    if (!debouncedSearch.trim()) return allDocs;
+    const s = debouncedSearch.toLowerCase();
+    return allDocs.filter(d =>
+      (d.invoiceNumber || '').toLowerCase().includes(s) ||
+      (d.customerName || '').toLowerCase().includes(s) ||
+      (d.exchangeItem || '').toLowerCase().includes(s)
+    );
+  }, [allDocs, debouncedSearch]);
+
+  // ── Paginated slice — correct total and page ────────────────────────────
+  const pageRows = useMemo(
+    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filtered, page]
+  );
 
   const handleMarkReceived = async (receivedDate, notes) => {
     await updateDoc(doc(db, 'sales', markDialog.id), {
@@ -174,9 +171,9 @@ const PendingExchangeTab = ({ db, onReceived }) => {
       updatedAt: serverTimestamp(),
     });
     toast.success('Exchange item marked as received!');
-    setCursorMap({});
+    setMarkDialog(null);
     setPage(0);
-    fetchData();
+    setRefreshKey(k => k + 1);
     onReceived();
   };
 
@@ -217,7 +214,7 @@ const PendingExchangeTab = ({ db, onReceived }) => {
                       ))}
                     </TableRow>
                   ))
-                : rows.length === 0
+                : pageRows.length === 0
                   ? (
                     <TableRow>
                       <TableCell colSpan={isMobile ? 3 : 5} align="center" sx={{ py: 6 }}>
@@ -228,7 +225,7 @@ const PendingExchangeTab = ({ db, onReceived }) => {
                       </TableCell>
                     </TableRow>
                   )
-                  : rows.map(row => (
+                  : pageRows.map(row => (
                     <TableRow key={row.id} hover sx={{ cursor: 'pointer' }}>
                       <TableCell onClick={() => navigate(`/sales/${row.id}`)}>
                         <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
@@ -276,7 +273,7 @@ const PendingExchangeTab = ({ db, onReceived }) => {
         </TableContainer>
         <TablePagination
           component="div"
-          count={total}
+          count={filtered.length}
           page={page}
           rowsPerPage={PAGE_SIZE}
           onPageChange={(_, p) => setPage(p)}
@@ -301,47 +298,46 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
+  // ── All received exchange docs fetched once ─────────────────────────────
+  const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [cursorMap, setCursorMap] = useState({});
 
   useEffect(() => {
     if (!db) return;
     let active = true;
     setLoading(true);
 
-    const run = async () => {
+    const load = async () => {
       try {
-        const cursor = page > 0 ? cursorMap[page - 1] : null;
-        // Single where clause + client-side filter for received status
         const snap = await getDocs(query(
           collection(db, 'sales'),
           orderBy('saleDate', 'desc'),
-          ...(cursor ? [startAfter(cursor)] : []),
-          limit(PAGE_SIZE * 5),
+          limit(500),
         ));
-
         if (!active) return;
-        const receivedDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        const receivedDocs = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
           .filter(d => d.exchangeReceived === true)
           .sort((a, b) => (b.exchangeReceivedDate || '').localeCompare(a.exchangeReceivedDate || ''));
-        setRows(receivedDocs);
-        setTotal(estimateTotal(page, snap.docs.length, PAGE_SIZE));
-        setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
+        setAllDocs(receivedDocs);
+        setPage(0);
       } catch (err) {
         if (!active) return;
-        console.error('[ExchangeTracking] received error:', err);
         toast.error('Failed to load received exchanges: ' + err.message);
       } finally {
         if (active) setLoading(false);
       }
     };
 
-    run();
+    load();
     return () => { active = false; };
-  }, [db, page, refresh]);
+  }, [db, refresh]);
+
+  const pageRows = useMemo(
+    () => allDocs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [allDocs, page]
+  );
 
   return (
     <Card>
@@ -364,7 +360,7 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
                     ))}
                   </TableRow>
                 ))
-              : rows.length === 0
+              : pageRows.length === 0
                 ? (
                   <TableRow>
                     <TableCell colSpan={isMobile ? 3 : 4} align="center" sx={{ py: 6 }}>
@@ -372,7 +368,7 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
                     </TableCell>
                   </TableRow>
                 )
-                : rows.map(row => (
+                : pageRows.map(row => (
                   <TableRow key={row.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/sales/${row.id}`)}>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
@@ -407,7 +403,7 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
       </TableContainer>
       <TablePagination
         component="div"
-        count={total}
+        count={allDocs.length}
         page={page}
         rowsPerPage={PAGE_SIZE}
         onPageChange={(_, p) => setPage(p)}
@@ -447,16 +443,8 @@ const ExchangeTracking = () => {
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 0 }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-          <Tab
-            icon={<SwapHoriz fontSize="small" />}
-            iconPosition="start"
-            label="Pending Receipt"
-          />
-          <Tab
-            icon={<DoneAll fontSize="small" />}
-            iconPosition="start"
-            label="Received"
-          />
+          <Tab icon={<SwapHoriz fontSize="small" />} iconPosition="start" label="Pending Receipt" />
+          <Tab icon={<DoneAll fontSize="small" />} iconPosition="start" label="Received" />
         </Tabs>
       </Box>
 

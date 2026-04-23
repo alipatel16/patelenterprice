@@ -36,7 +36,6 @@ const StatusChip = ({ status }) => {
 
 // ─── Urgency helpers ──────────────────────────────────────────────────────────
 const getUrgency = (row) => {
-  // Resolved / closed complaints are never urgent
   if (!row.expectedResolutionDate || row.status === 'resolved' || row.status === 'closed') {
     return 'normal';
   }
@@ -46,13 +45,12 @@ const getUrgency = (row) => {
   due.setHours(0, 0, 0, 0);
   const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
 
-  if (diffDays < 0)  return 'overdue';    // past due
-  if (diffDays === 0) return 'due_today'; // due today
-  if (diffDays <= 4)  return 'due_soon';  // next 4 days
+  if (diffDays < 0)  return 'overdue';
+  if (diffDays === 0) return 'due_today';
+  if (diffDays <= 4)  return 'due_soon';
   return 'normal';
 };
 
-// Sort order: overdue(0) > due_today(1) > due_soon(2) > normal(3)
 const URGENCY_ORDER = { overdue: 0, due_today: 1, due_soon: 2, normal: 3 };
 
 const sortByUrgency = (rows) =>
@@ -153,7 +151,6 @@ const ComplaintList = () => {
   const [deleteId, setDeleteId] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  // Separate urgency counts fetched once from the full active set
   const [urgencyCounts, setUrgencyCounts] = useState({ overdue: 0, due_today: 0, due_soon: 0 });
   const searchTimer = useRef(null);
 
@@ -178,8 +175,6 @@ const ComplaintList = () => {
     // eslint-disable-next-line
   }, [db, page, debouncedSearch, statusFilter, assigneeFilter, urgencyFilter, refreshKey]);
 
-  // Compute urgency summary counts from the currently loaded page
-  // (gives live feedback based on visible rows)
   useEffect(() => {
     const counts = { overdue: 0, due_today: 0, due_soon: 0 };
     rows.forEach(r => {
@@ -220,9 +215,6 @@ const ComplaintList = () => {
       // ── Normal paginated mode ──
       const whereConstraints = buildWhereConstraints();
 
-      // For urgency filter we need to fetch more and filter client-side
-      // because Firestore can't filter by computed urgency.
-      // Strategy: fetch a generous batch, filter by urgency, sort, then paginate.
       if (urgencyFilter !== 'all') {
         const snap = await getDocs(query(
           collection(db, 'complaints'), ...whereConstraints,
@@ -236,16 +228,16 @@ const ComplaintList = () => {
         return;
       }
 
-      // Standard paginated path — sort by urgency within each page
+      // Standard paginated path
       const countSnap = await getCountFromServer(query(collection(db, 'complaints'), ...whereConstraints));
       setTotal(countSnap.data().count);
 
       const constraints = [...whereConstraints, orderBy('createdAt', 'desc'), limit(PAGE_SIZE)];
-      if (page > 0 && cursorMap[page]) constraints.push(startAfter(cursorMap[page]));
+      // FIX: read cursor from cursorMap[page - 1], store at cursorMap[page]
+      if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
       const snap = await getDocs(query(collection(db, 'complaints'), ...constraints));
-      if (snap.docs.length > 0) setCursorMap(m => ({ ...m, [page + 1]: snap.docs[snap.docs.length - 1] }));
+      if (snap.docs.length > 0) setCursorMap(m => ({ ...m, [page]: snap.docs[snap.docs.length - 1] }));
 
-      // Sort the fetched page by urgency
       const pageRows = sortByUrgency(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setRows(pageRows);
     } catch (e) {
@@ -360,7 +352,7 @@ const ComplaintList = () => {
         </Stack>
       </Box>
 
-      {/* Urgency summary bar — always visible when there are urgent items */}
+      {/* Urgency summary bar */}
       <UrgencySummaryBar
         rows={rows}
         urgencyFilter={urgencyFilter}
@@ -441,10 +433,16 @@ const ComplaintList = () => {
             </Box>
           ) : rows.map(row => <MobileCard key={row.id} row={row} />)}
           {rows.length > 0 && (
-            <TablePagination component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); setCursorMap({}); }}
-              rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
-              sx={{ '.MuiTablePagination-toolbar': { px: 0 } }} />
+            <TablePagination
+              component="div"
+              count={total}
+              page={page}
+              // FIX: do NOT reset cursorMap here — that was wiping the cursor on every page click
+              onPageChange={(_, p) => setPage(p)}
+              rowsPerPage={PAGE_SIZE}
+              rowsPerPageOptions={[PAGE_SIZE]}
+              sx={{ '.MuiTablePagination-toolbar': { px: 0 } }}
+            />
           )}
         </Box>
       ) : (
@@ -485,7 +483,6 @@ const ComplaintList = () => {
                   return (
                     <TableRow key={row.id} hover sx={{ cursor: 'pointer', bgcolor: uc.bg }}
                       onClick={() => navigate(`/complaints/${row.id}`)}>
-                      {/* Urgency colour strip on left */}
                       <TableCell sx={{
                         width: 6, p: 0,
                         bgcolor: uc.leftBorder,
@@ -553,9 +550,15 @@ const ComplaintList = () => {
               </TableBody>
             </Table>
           </TableContainer>
-          <TablePagination component="div" count={total} page={page}
-            onPageChange={(_, p) => { setPage(p); setCursorMap({}); }}
-            rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
+          {/* FIX: do NOT reset cursorMap here — that was wiping the cursor on every page click */}
+          <TablePagination
+            component="div"
+            count={total}
+            page={page}
+            onPageChange={(_, p) => setPage(p)}
+            rowsPerPage={PAGE_SIZE}
+            rowsPerPageOptions={[PAGE_SIZE]}
+          />
         </Card>
       )}
 
