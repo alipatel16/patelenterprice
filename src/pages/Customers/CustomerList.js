@@ -1,40 +1,60 @@
+// src/pages/Customers/CustomerList.js
+//
+// SEARCH STRATEGY
+// ───────────────
+// No month selected  →  server-side cursor pagination (fast, cheap).
+//                        Search bar is disabled.
+// Month selected     →  fetch ALL customers created in that month (bounded).
+//                        Filter by search + type/category in memory.
+//                        Paginate the filtered array in memory.
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Typography, Button, Card, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TablePagination, Chip, IconButton, Tooltip, Dialog, DialogTitle,
-  DialogContent, DialogActions, Grid, MenuItem, Select, FormControl,
-  InputLabel, CircularProgress, Alert, Avatar,
+  TablePagination, Chip, Avatar, IconButton, Tooltip, Dialog,
+  DialogTitle, DialogContent, DialogActions, MenuItem, Select,
+  FormControl, InputLabel, Grid, Alert, CircularProgress,
+  useTheme, useMediaQuery, Stack,
 } from '@mui/material';
-import { Add, Search, Edit, Delete, Business, Close, Save } from '@mui/icons-material';
+import { Search, Edit, Delete, PersonAdd, Business, Save, Close } from '@mui/icons-material';
 import {
-  collection, query, where, orderBy, limit, startAfter,
-  getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
-  getCountFromServer,
+  collection, query, orderBy, limit, startAfter, getDocs,
+  deleteDoc, doc, addDoc, updateDoc, getCountFromServer,
+  where, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { CUSTOMER_TYPES, CUSTOMER_CATEGORIES } from '../../constants';
-import { useMediaQuery, useTheme } from '@mui/material';
+import MonthSearchBar from '../../components/MonthSearchBar';
 
-const EMPTY = {
-  name: '', phone: '', email: '', address: '',
-  city: '', state: 'Gujarat', pincode: '',
-  customerType: 'retail', category: 'individual',
-  gstin: '', aadhaar: '',
-};
 const PAGE_SIZE = 10;
+
+const getMonthBounds = (yearMonth) => {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    start: new Date(y, m - 1, 1, 0, 0, 0, 0),
+    end:   new Date(y, m - 1, lastDay, 23, 59, 59, 999),
+  };
+};
+
+// ─── Customer Form Dialog ─────────────────────────────────────────────────────
+const EMPTY = {
+  customerType: 'retail', category: 'individual', name: '', phone: '',
+  email: '', address: '', city: '', pincode: '', gstin: '', aadhaar: '',
+};
 
 const CustomerFormDialog = ({ open, onClose, onSave, initial }) => {
   const [form, setForm] = useState(EMPTY);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { setForm(initial || EMPTY); setError(''); }, [initial, open]);
+  useEffect(() => { setForm(initial ? { ...EMPTY, ...initial } : EMPTY); setError(''); }, [initial, open]);
   const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
   const handleSave = async () => {
-    if (!form.name || !form.phone) { setError('Name and phone are required'); return; }
-    setLoading(true);
-    try { await onSave(form); onClose(); } catch (e) { setError(e.message); } finally { setLoading(false); }
+    if (!form.name.trim() || !form.phone.trim()) { setError('Name and phone are required'); return; }
+    setSaving(true);
+    try { await onSave(form); onClose(); } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -71,7 +91,7 @@ const CustomerFormDialog = ({ open, onClose, onSave, initial }) => {
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose} variant="outlined">Cancel</Button>
-        <Button onClick={handleSave} variant="contained" disabled={loading} startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
+        <Button onClick={handleSave} variant="contained" disabled={saving} startIcon={saving ? <CircularProgress size={16} /> : <Save />}>
           {initial?.id ? 'Update' : 'Add Customer'}
         </Button>
       </DialogActions>
@@ -79,153 +99,176 @@ const CustomerFormDialog = ({ open, onClose, onSave, initial }) => {
   );
 };
 
+// ─── Main Component ───────────────────────────────────────────────────────────
 const CustomerList = () => {
   const { db } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows, setRows] = useState([]);
+  const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [catFilter, setCatFilter] = useState('all');
+  const [total, setTotal]     = useState(0);
+  const [page, setPage]       = useState(0);
   const [cursorMap, setCursorMap] = useState({});
-  const [refreshKey, setRefreshKey] = useState(0); // ← forces re-fetch after CRUD
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [deleteId, setDeleteId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [catFilter,  setCatFilter]  = useState('all');
+
+  const [searchMonth,     setSearchMonth]     = useState('');
+  const [search,          setSearch]          = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchTimer = useRef(null);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing,    setEditing]    = useState(null);
+  const [deleteId,   setDeleteId]   = useState(null);
 
   const handleSearch = val => {
     setSearch(val);
     clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(val);
-      setPage(0);
-      setCursorMap({});
-    }, 450);
+    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
+  };
+
+  const handleMonthChange = val => {
+    setSearchMonth(val); setSearch(''); setDebouncedSearch(''); setPage(0); setCursorMap({});
+  };
+
+  const handleFilterChange = setter => e => {
+    setter(e.target.value); setPage(0); setCursorMap({});
   };
 
   useEffect(() => {
     if (!db) return;
     let active = true;
-
     const run = async () => {
       setLoading(true);
       try {
+        // ── MONTH SEARCH MODE ────────────────────────────────────────────
+        if (searchMonth) {
+          const { start, end } = getMonthBounds(searchMonth);
+          const snap = await getDocs(query(
+            collection(db, 'customers'),
+            where('createdAt', '>=', Timestamp.fromDate(start)),
+            where('createdAt', '<=', Timestamp.fromDate(end)),
+            orderBy('createdAt', 'desc'),
+          ));
+          if (!active) return;
+          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          if (typeFilter !== 'all') all = all.filter(r => r.customerType === typeFilter);
+          if (catFilter  !== 'all') all = all.filter(r => r.category === catFilter);
+          if (debouncedSearch.trim()) {
+            const s = debouncedSearch.toLowerCase();
+            all = all.filter(r =>
+              r.name?.toLowerCase().includes(s) ||
+              r.phone?.includes(s) ||
+              r.email?.toLowerCase().includes(s)
+            );
+          }
+          setTotal(all.length);
+          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
+          return;
+        }
+
+        // ── NORMAL CURSOR PAGINATION ─────────────────────────────────────
         const constraints = [orderBy('name')];
         if (typeFilter !== 'all') constraints.push(where('customerType', '==', typeFilter));
-        if (catFilter !== 'all') constraints.push(where('category', '==', catFilter));
+        if (catFilter  !== 'all') constraints.push(where('category',     '==', catFilter));
         constraints.push(limit(PAGE_SIZE));
         if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
 
-        const snap = await getDocs(query(collection(db, 'customers'), ...constraints));
-        let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-        if (debouncedSearch.trim()) {
-          const s = debouncedSearch.toLowerCase();
-          docs = docs.filter(d =>
-            d.name?.toLowerCase().includes(s) ||
-            d.phone?.includes(s) ||
-            d.email?.toLowerCase().includes(s)
-          );
-        }
-
         const countFilters = [];
         if (typeFilter !== 'all') countFilters.push(where('customerType', '==', typeFilter));
-        if (catFilter !== 'all') countFilters.push(where('category', '==', catFilter));
-        const countSnap = await getCountFromServer(query(collection(db, 'customers'), ...countFilters));
+        if (catFilter  !== 'all') countFilters.push(where('category',     '==', catFilter));
 
+        const [snap, countSnap] = await Promise.all([
+          getDocs(query(collection(db, 'customers'), ...constraints)),
+          getCountFromServer(query(collection(db, 'customers'), ...countFilters)),
+        ]);
         if (!active) return;
-        setRows(docs);
+        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         setTotal(countSnap.data().count);
-        setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
+        if (snap.docs.length > 0) setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
+
       } catch (err) {
         if (!active) return;
-        console.error('CustomerList fetch error:', err);
         toast.error('Failed to load customers');
       } finally {
         if (active) setLoading(false);
       }
     };
-
     run();
     return () => { active = false; };
-  }, [db, page, typeFilter, catFilter, debouncedSearch, refreshKey]); // refreshKey in deps
+  }, [db, page, typeFilter, catFilter, searchMonth, debouncedSearch, refreshKey]);
 
-  // On CRUD: reset page & cursor, then bump refreshKey to guarantee effect re-runs
-  const resetAndRefetch = () => {
-    setCursorMap({});
-    setPage(0);
-    setRefreshKey(k => k + 1);
-  };
+  const resetAndRefetch = () => { setCursorMap({}); setPage(0); setRefreshKey(k => k + 1); };
 
   const handleSave = async form => {
     if (editing?.id) {
       await updateDoc(doc(db, 'customers', editing.id), { ...form, updatedAt: serverTimestamp() });
       toast.success('Customer updated');
     } else {
-      await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
       toast.success('Customer added');
     }
     resetAndRefetch();
   };
 
   const handleDelete = async () => {
-    await deleteDoc(doc(db, 'customers', deleteId));
-    toast.success('Customer deleted');
-    setDeleteId(null);
-    resetAndRefetch();
-  };
-
-  const handleFilterChange = setter => e => {
-    setter(e.target.value);
-    setPage(0);
-    setCursorMap({});
-    setRefreshKey(k => k + 1);
+    try {
+      await deleteDoc(doc(db, 'customers', deleteId));
+      toast.success('Customer deleted');
+      setDeleteId(null);
+      resetAndRefetch();
+    } catch (e) { toast.error('Delete failed: ' + e.message); }
   };
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
-        <Typography variant="h5" fontWeight={700}>Customers</Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={() => { setEditing(null); setDialogOpen(true); }}>
+        <Box>
+          <Typography variant="h5" fontWeight={700}>Customers</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {searchMonth ? `${total} results` : `${total} total customers`}
+          </Typography>
+        </Box>
+        <Button variant="contained" startIcon={<PersonAdd />}
+          onClick={() => { setEditing(null); setDialogOpen(true); }}
+          size={isMobile ? 'small' : 'medium'}>
           Add Customer
         </Button>
       </Box>
 
-      <Card sx={{ mb: 2 }}>
-        <Box sx={{ p: 2, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-          <TextField
-            placeholder="Search name, phone, email..." value={search}
-            onChange={e => handleSearch(e.target.value)} size="small" sx={{ flex: 1, minWidth: 200 }}
-            InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }}
-          />
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2, p: 2 }}>
+        <MonthSearchBar
+          selectedMonth={searchMonth} onMonthChange={handleMonthChange}
+          search={search} onSearchChange={handleSearch}
+          searchPlaceholder="Search by name, phone or email…"
+          resultCount={searchMonth ? total : undefined} loading={loading}
+        />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} mt={1.5}>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
             <InputLabel>Type</InputLabel>
             <Select value={typeFilter} onChange={handleFilterChange(setTypeFilter)} label="Type">
               <MenuItem value="all">All Types</MenuItem>
               {CUSTOMER_TYPES.map(t => <MenuItem key={t} value={t} sx={{ textTransform: 'capitalize' }}>{t}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
             <InputLabel>Category</InputLabel>
             <Select value={catFilter} onChange={handleFilterChange(setCatFilter)} label="Category">
               <MenuItem value="all">All</MenuItem>
               {CUSTOMER_CATEGORIES.map(c => <MenuItem key={c} value={c} sx={{ textTransform: 'capitalize' }}>{c}</MenuItem>)}
             </Select>
           </FormControl>
-        </Box>
+        </Stack>
       </Card>
 
-      <Card>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
         <TableContainer>
           <Table size="small">
             <TableHead>
-              <TableRow>
+              <TableRow sx={{ bgcolor: 'grey.50' }}>
                 <TableCell>Name</TableCell>
                 {!isMobile && <TableCell>Contact</TableCell>}
                 <TableCell>Type</TableCell>
@@ -236,15 +279,26 @@ const CustomerList = () => {
             </TableHead>
             <TableBody>
               {loading
-                ? Array.from({ length: 5 }).map((_, i) => (
+                ? Array.from({ length: PAGE_SIZE }).map((_, i) => (
                     <TableRow key={i}>
                       {Array.from({ length: isMobile ? 3 : 6 }).map((_, j) => (
-                        <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
+                        <TableCell key={j}><Box sx={{ height: 18, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 : rows.length === 0
-                  ? <TableRow><TableCell colSpan={isMobile ? 3 : 6} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No customers found</Typography></TableCell></TableRow>
+                  ? (
+                    <TableRow>
+                      <TableCell colSpan={isMobile ? 3 : 6} align="center" sx={{ py: 6 }}>
+                        <Typography color="text.secondary">
+                          {searchMonth && debouncedSearch
+                            ? `No customers matching "${debouncedSearch}"`
+                            : searchMonth ? 'No customers added in this month'
+                            : 'No customers found'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )
                   : rows.map(row => (
                       <TableRow key={row.id} hover>
                         <TableCell>
@@ -289,14 +343,14 @@ const CustomerList = () => {
             </TableBody>
           </Table>
         </TableContainer>
-        <TablePagination
-          component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
-          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]}
-        />
+        <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
       </Card>
 
-      <CustomerFormDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onSave={handleSave} initial={editing} />
-
+      <CustomerFormDialog
+        open={dialogOpen} onClose={() => { setDialogOpen(false); setEditing(null); }}
+        onSave={handleSave} initial={editing}
+      />
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Customer?</DialogTitle>
         <DialogContent><Typography>This action cannot be undone.</Typography></DialogContent>

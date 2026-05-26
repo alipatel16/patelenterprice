@@ -1,37 +1,54 @@
+// src/pages/Products/ProductList.js
+//
+// SEARCH STRATEGY
+// No month selected  →  server-side cursor pagination, search disabled.
+// Month selected     →  fetch all products added in that month, search in memory.
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Typography, Button, Card, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TablePagination, Chip, IconButton, Tooltip, Dialog, DialogTitle,
   DialogContent, DialogActions, Grid, MenuItem, Select, FormControl,
-  InputLabel, CircularProgress, Alert,
+  InputLabel, CircularProgress, Alert, useTheme, useMediaQuery,
 } from '@mui/material';
-import { Add, Search, Edit, Delete, Close, Save } from '@mui/icons-material';
+import { Add, Edit, Delete, Close, Save } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
   addDoc, updateDoc, deleteDoc, doc, serverTimestamp, getCountFromServer,
+  where, Timestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { GST_SLABS } from '../../constants';
 import { formatCurrency } from '../../utils';
-import { useMediaQuery, useTheme } from '@mui/material';
+import MonthSearchBar from '../../components/MonthSearchBar';
+
+const PAGE_SIZE = 10;
+
+const getMonthBounds = (yearMonth) => {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    start: new Date(y, m - 1, 1, 0, 0, 0, 0),
+    end:   new Date(y, m - 1, lastDay, 23, 59, 59, 999),
+  };
+};
 
 const EMPTY = { name: '', maker: '', description: '', hsnCode: '', price: '', gstRate: 18, category: '', unit: 'pcs' };
-const PAGE_SIZE = 10;
 
 const ProductFormDialog = ({ open, onClose, onSave, initial }) => {
   const [form, setForm] = useState(EMPTY);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { setForm(initial || EMPTY); setError(''); }, [initial, open]);
   const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
   const handleSave = async () => {
     if (!form.name || !form.price) { setError('Product name and price are required'); return; }
     if (isNaN(parseFloat(form.price))) { setError('Price must be a valid number'); return; }
-    setLoading(true);
+    setSaving(true);
     try { await onSave({ ...form, price: parseFloat(form.price) }); onClose(); }
-    catch (e) { setError(e.message); } finally { setLoading(false); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -68,7 +85,7 @@ const ProductFormDialog = ({ open, onClose, onSave, initial }) => {
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose} variant="outlined">Cancel</Button>
-        <Button onClick={handleSave} variant="contained" disabled={loading} startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
+        <Button onClick={handleSave} variant="contained" disabled={saving} startIcon={saving ? <CircularProgress size={16} /> : <Save />}>
           {initial?.id ? 'Update' : 'Add Product'}
         </Button>
       </DialogActions>
@@ -81,77 +98,88 @@ const ProductList = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows, setRows] = useState([]);
+  const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [total, setTotal]     = useState(0);
+  const [page, setPage]       = useState(0);
   const [cursorMap, setCursorMap] = useState({});
-  const [refreshKey, setRefreshKey] = useState(0); // ← forces re-fetch after CRUD
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [deleteId, setDeleteId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [searchMonth,     setSearchMonth]     = useState('');
+  const [search,          setSearch]          = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchTimer = useRef(null);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing,    setEditing]    = useState(null);
+  const [deleteId,   setDeleteId]   = useState(null);
 
   const handleSearch = val => {
     setSearch(val);
     clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(val);
-      setPage(0);
-      setCursorMap({});
-    }, 450);
+    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
+  };
+
+  const handleMonthChange = val => {
+    setSearchMonth(val); setSearch(''); setDebouncedSearch(''); setPage(0); setCursorMap({});
   };
 
   useEffect(() => {
     if (!db) return;
     let active = true;
-
     const run = async () => {
       setLoading(true);
       try {
+        // ── MONTH SEARCH MODE ────────────────────────────────────────────
+        if (searchMonth) {
+          const { start, end } = getMonthBounds(searchMonth);
+          const snap = await getDocs(query(
+            collection(db, 'products'),
+            where('createdAt', '>=', Timestamp.fromDate(start)),
+            where('createdAt', '<=', Timestamp.fromDate(end)),
+            orderBy('createdAt', 'desc'),
+          ));
+          if (!active) return;
+          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          if (debouncedSearch.trim()) {
+            const s = debouncedSearch.toLowerCase();
+            all = all.filter(r =>
+              r.name?.toLowerCase().includes(s)     ||
+              r.maker?.toLowerCase().includes(s)    ||
+              r.hsnCode?.includes(s)                ||
+              r.category?.toLowerCase().includes(s)
+            );
+          }
+          setTotal(all.length);
+          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
+          return;
+        }
+
+        // ── NORMAL CURSOR PAGINATION ─────────────────────────────────────
         const constraints = [orderBy('name'), limit(PAGE_SIZE)];
         if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
 
-        const snap = await getDocs(query(collection(db, 'products'), ...constraints));
-        let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-        if (debouncedSearch.trim()) {
-          const s = debouncedSearch.toLowerCase();
-          docs = docs.filter(d =>
-            d.name?.toLowerCase().includes(s) ||
-            d.maker?.toLowerCase().includes(s) ||
-            d.hsnCode?.includes(s) ||
-            d.category?.toLowerCase().includes(s)
-          );
-        }
-
-        const countSnap = await getCountFromServer(collection(db, 'products'));
-
+        const [snap, countSnap] = await Promise.all([
+          getDocs(query(collection(db, 'products'), ...constraints)),
+          getCountFromServer(collection(db, 'products')),
+        ]);
         if (!active) return;
-        setRows(docs);
+        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         setTotal(countSnap.data().count);
-        setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
+        if (snap.docs.length > 0) setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
+
       } catch (err) {
         if (!active) return;
-        console.error('ProductList fetch error:', err);
         toast.error('Failed to load products');
       } finally {
         if (active) setLoading(false);
       }
     };
-
     run();
     return () => { active = false; };
-  }, [db, page, debouncedSearch, refreshKey]); // refreshKey in deps
+  }, [db, page, searchMonth, debouncedSearch, refreshKey]);
 
-  // On CRUD: reset page & cursor, then bump refreshKey to guarantee effect re-runs
-  const resetAndRefetch = () => {
-    setCursorMap({});
-    setPage(0);
-    setRefreshKey(k => k + 1);
-  };
+  const resetAndRefetch = () => { setCursorMap({}); setPage(0); setRefreshKey(k => k + 1); };
 
   const handleSave = async form => {
     if (editing?.id) {
@@ -165,64 +193,84 @@ const ProductList = () => {
   };
 
   const handleDelete = async () => {
-    await deleteDoc(doc(db, 'products', deleteId));
-    toast.success('Product deleted');
-    setDeleteId(null);
-    resetAndRefetch();
+    try {
+      await deleteDoc(doc(db, 'products', deleteId));
+      toast.success('Product deleted');
+      setDeleteId(null);
+      resetAndRefetch();
+    } catch (e) { toast.error('Delete failed: ' + e.message); }
   };
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
-        <Typography variant="h5" fontWeight={700}>Product Master</Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={() => { setEditing(null); setDialogOpen(true); }}>
+        <Box>
+          <Typography variant="h5" fontWeight={700}>Products</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {searchMonth ? `${total} results` : `${total} total products`}
+          </Typography>
+        </Box>
+        <Button variant="contained" startIcon={<Add />}
+          onClick={() => { setEditing(null); setDialogOpen(true); }}
+          size={isMobile ? 'small' : 'medium'}>
           Add Product
         </Button>
       </Box>
 
-      <Card sx={{ mb: 2 }}>
-        <Box sx={{ p: 2 }}>
-          <TextField fullWidth placeholder="Search product name, maker, HSN, category..."
-            value={search} onChange={e => handleSearch(e.target.value)} size="small"
-            InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }}
-          />
-        </Box>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2, p: 2 }}>
+        <MonthSearchBar
+          selectedMonth={searchMonth} onMonthChange={handleMonthChange}
+          search={search} onSearchChange={handleSearch}
+          searchPlaceholder="Search by name, brand, HSN or category…"
+          resultCount={searchMonth ? total : undefined} loading={loading}
+        />
       </Card>
 
-      <Card>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
         <TableContainer>
           <Table size="small">
             <TableHead>
-              <TableRow>
-                <TableCell>Product Name</TableCell>
+              <TableRow sx={{ bgcolor: 'grey.50' }}>
+                <TableCell>Name</TableCell>
                 {!isMobile && <TableCell>Maker</TableCell>}
-                {!isMobile && <TableCell>HSN Code</TableCell>}
+                {!isMobile && <TableCell>HSN</TableCell>}
                 <TableCell>Price</TableCell>
-                <TableCell>GST</TableCell>
-                {!isMobile && <TableCell>Category</TableCell>}
+                {!isMobile && <TableCell>GST</TableCell>}
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading
-                ? Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: isMobile ? 4 : 7 }).map((_, j) => (
-                      <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
-                    ))}</TableRow>
+                ? Array.from({ length: PAGE_SIZE }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: isMobile ? 3 : 6 }).map((_, j) => (
+                        <TableCell key={j}><Box sx={{ height: 18, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
+                      ))}
+                    </TableRow>
                   ))
                 : rows.length === 0
-                  ? <TableRow><TableCell colSpan={isMobile ? 4 : 7} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No products found</Typography></TableCell></TableRow>
+                  ? (
+                    <TableRow>
+                      <TableCell colSpan={isMobile ? 3 : 6} align="center" sx={{ py: 6 }}>
+                        <Typography color="text.secondary">
+                          {searchMonth && debouncedSearch
+                            ? `No products matching "${debouncedSearch}"`
+                            : searchMonth ? 'No products added in this month'
+                            : 'No products found'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )
                   : rows.map(row => (
                       <TableRow key={row.id} hover>
                         <TableCell>
                           <Typography variant="body2" fontWeight={600}>{row.name}</Typography>
-                          {isMobile && <Typography variant="caption" color="text.secondary">{row.maker}</Typography>}
+                          {isMobile && <Typography variant="caption" color="text.secondary">{row.category}</Typography>}
                         </TableCell>
                         {!isMobile && <TableCell>{row.maker || '-'}</TableCell>}
-                        {!isMobile && <TableCell>{row.hsnCode || '-'}</TableCell>}
-                        <TableCell><Typography fontWeight={600} color="success.main">{formatCurrency(row.price)}</Typography></TableCell>
-                        <TableCell><Chip label={`${row.gstRate}%`} size="small" color="info" /></TableCell>
-                        {!isMobile && <TableCell>{row.category || '-'}</TableCell>}
+                        {!isMobile && <TableCell><Typography variant="caption">{row.hsnCode || '-'}</Typography></TableCell>}
+                        <TableCell><Typography variant="body2" fontWeight={600}>{formatCurrency(row.price)}</Typography></TableCell>
+                        {!isMobile && <TableCell><Chip label={`${row.gstRate}%`} size="small" variant="outlined" /></TableCell>}
                         <TableCell align="right">
                           <Tooltip title="Edit">
                             <IconButton size="small" onClick={() => { setEditing(row); setDialogOpen(true); }}>
@@ -241,17 +289,17 @@ const ProductList = () => {
             </TableBody>
           </Table>
         </TableContainer>
-        <TablePagination
-          component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
-          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]}
-        />
+        <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
       </Card>
 
-      <ProductFormDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onSave={handleSave} initial={editing} />
-
+      <ProductFormDialog
+        open={dialogOpen} onClose={() => { setDialogOpen(false); setEditing(null); }}
+        onSave={handleSave} initial={editing}
+      />
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Product?</DialogTitle>
-        <DialogContent><Typography>This will also affect inventory. Continue?</Typography></DialogContent>
+        <DialogContent><Typography>This action cannot be undone.</Typography></DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteId(null)}>Cancel</Button>
           <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>

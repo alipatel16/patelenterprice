@@ -974,8 +974,9 @@ const CreateSale = () => {
           <Typography variant="subtitle1" fontWeight={700} mb={2}>Invoice Summary</Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <Box display="flex" justifyContent="space-between">
-              <Typography variant="body2" color="text.secondary">Subtotal (Incl. Tax)</Typography>
-              <Typography variant="body2">{formatCurrency(subtotal)}</Typography>
+              <Typography variant="body2" color="text.secondary">Subtotal</Typography>
+              {/* ── CHANGED: show base amount excluding GST ── */}
+              <Typography variant="body2">{formatCurrency(subtotal - totalTax)}</Typography>
             </Box>
             {invoiceType === 'gst' && (
               <Box display="flex" justifyContent="space-between">

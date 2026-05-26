@@ -1,45 +1,57 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// src/pages/Purchase/PurchaseList.js
+//
+// SEARCH STRATEGY
+// No month selected  →  server-side cursor pagination, search disabled.
+// Month selected     →  fetch all purchases in that month (by createdAt),
+//                        filter by supplierName / invoiceNumber in memory.
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Box, Typography, Button, Card, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TablePagination, IconButton, Tooltip, Dialog, DialogTitle,
-  DialogContent, DialogActions, Grid, MenuItem, Select, FormControl,
-  InputLabel, CircularProgress, Alert, Autocomplete, Divider,
+  Box, Typography, Button, Card, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, TablePagination, Chip,
+  IconButton, Stack, TextField, InputAdornment, CircularProgress,
+  Dialog, DialogTitle, DialogContent, DialogActions, Grid, Alert,
+  Divider, MenuItem, Select, FormControl, InputLabel,
+  useTheme, useMediaQuery,
 } from '@mui/material';
-import {
-  Add, Search, Edit, Delete, Close, Save, AddCircle, RemoveCircle,
-} from '@mui/icons-material';
+import { Add, Edit, Delete, Close, Save } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
   addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp,
-  getCountFromServer,
+  getCountFromServer, where, Timestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
-import { formatCurrency, formatDate, debounce } from '../../utils';
-import { useMediaQuery, useTheme } from '@mui/material';
+import { formatCurrency, formatDate } from '../../utils';
 import {
-  applyInventoryDeltas,
-  applyNewPurchaseInventory,
-  reversePurchaseInventory,
+  applyNewPurchaseInventory, applyInventoryDeltas, reversePurchaseInventory,
 } from '../../utils/inventoryUtils';
+import MonthSearchBar from '../../components/MonthSearchBar';
 
+const PAGE_SIZE = 10;
+
+const getMonthBounds = (yearMonth) => {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    start: new Date(y, m - 1, 1, 0, 0, 0, 0),
+    end:   new Date(y, m - 1, lastDay, 23, 59, 59, 999),
+  };
+};
+
+// ─── Purchase Form Dialog ─────────────────────────────────────────────────────
 const EMPTY_PURCHASE = {
-  supplierName: '', supplierGst: '', invoiceNumber: '',
-  invoiceDate: new Date().toISOString().split('T')[0],
+  supplierName: '', supplierGst: '', invoiceNumber: '', invoiceDate: '',
   items: [{ productId: '', productName: '', qty: 1, price: 0, gstRate: 18 }],
-  notes: '',
 };
 
 const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
   const [form, setForm] = useState(EMPTY_PURCHASE);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
   useEffect(() => { setForm(initial ? { ...EMPTY_PURCHASE, ...initial } : EMPTY_PURCHASE); setError(''); }, [initial, open]);
 
-  const setField = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
-
+  const setField = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
   const setItem = (idx, k) => (val) => {
     setForm(p => {
       const items = [...p.items];
@@ -51,25 +63,17 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
       return { ...p, items };
     });
   };
-
   const addItem = () => setForm(p => ({ ...p, items: [...p.items, { productId: '', productName: '', qty: 1, price: 0, gstRate: 18 }] }));
-  const removeItem = (idx) => setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
-
+  const removeItem = idx => setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
   const grandTotal = form.items.reduce((sum, it) => sum + (parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0), 0);
 
   const handleSave = async () => {
     if (!form.supplierName || form.items.some(it => !it.productName || !it.qty || !it.price)) {
       setError('Please fill all required fields'); return;
     }
-    setLoading(true);
-    try {
-      await onSave({ ...form, grandTotal });
-      onClose();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    setSaving(true);
+    try { await onSave({ ...form, grandTotal }); onClose(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   return (
@@ -81,78 +85,38 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
       <DialogContent dividers>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={6}>
-            <TextField fullWidth label="Supplier Name *" value={form.supplierName} onChange={setField('supplierName')} size="small" />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField fullWidth label="Supplier GST" value={form.supplierGst} onChange={setField('supplierGst')} size="small" />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField fullWidth label="Invoice Number" value={form.invoiceNumber} onChange={setField('invoiceNumber')} size="small" />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField fullWidth label="Invoice Date" type="date" value={form.invoiceDate} onChange={setField('invoiceDate')} size="small" InputLabelProps={{ shrink: true }} />
-          </Grid>
+          <Grid item xs={12} sm={6}><TextField fullWidth label="Supplier Name *" value={form.supplierName} onChange={setField('supplierName')} size="small" /></Grid>
+          <Grid item xs={12} sm={6}><TextField fullWidth label="Supplier GST" value={form.supplierGst} onChange={setField('supplierGst')} size="small" /></Grid>
+          <Grid item xs={12} sm={6}><TextField fullWidth label="Invoice Number" value={form.invoiceNumber} onChange={setField('invoiceNumber')} size="small" /></Grid>
+          <Grid item xs={12} sm={6}><TextField fullWidth label="Invoice Date" type="date" value={form.invoiceDate} onChange={setField('invoiceDate')} size="small" InputLabelProps={{ shrink: true }} /></Grid>
         </Grid>
-
         <Divider sx={{ my: 2 }} />
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
           <Typography fontWeight={600}>Items</Typography>
-          <Button size="small" startIcon={<AddCircle />} onClick={addItem}>Add Item</Button>
+          <Button size="small" startIcon={<Add />} onClick={addItem}>Add Item</Button>
         </Box>
-
-        {form.items.map((it, idx) => (
-          <Grid container spacing={1} key={idx} sx={{ mb: 1 }} alignItems="center">
-            <Grid item xs={12} sm={4}>
-              <Autocomplete
-                size="small"
-                options={products}
-                getOptionLabel={p => p.name || ''}
-                value={products.find(p => p.id === it.productId) || null}
-                onChange={(_, v) => setItem(idx, 'productId')(v?.id || '')}
-                renderInput={params => <TextField {...params} label="Product *" />}
-              />
-            </Grid>
-            <Grid item xs={4} sm={2}>
-              <TextField fullWidth size="small" label="Qty *" type="number" value={it.qty}
-                onChange={e => setItem(idx, 'qty')(parseFloat(e.target.value) || 0)} />
-            </Grid>
-            <Grid item xs={4} sm={2}>
-              <TextField fullWidth size="small" label="Price *" type="number" value={it.price}
-                onChange={e => setItem(idx, 'price')(parseFloat(e.target.value) || 0)} />
-            </Grid>
-            <Grid item xs={4} sm={2}>
-              <FormControl fullWidth size="small">
-                <InputLabel>GST%</InputLabel>
-                <Select value={it.gstRate} onChange={e => setItem(idx, 'gstRate')(e.target.value)} label="GST%">
-                  {[0, 5, 12, 18, 28].map(r => <MenuItem key={r} value={r}>{r}%</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={2} sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-              <Typography variant="body2" fontWeight={600} sx={{ mr: 1 }}>
-                {formatCurrency((it.qty || 0) * (it.price || 0))}
-              </Typography>
-              {form.items.length > 1 && (
-                <IconButton size="small" color="error" onClick={() => removeItem(idx)}>
-                  <RemoveCircle fontSize="small" />
-                </IconButton>
-              )}
-            </Grid>
-          </Grid>
+        {form.items.map((item, idx) => (
+          <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Product</InputLabel>
+              <Select value={item.productId} onChange={e => setItem(idx, 'productId')(e.target.value)} label="Product">
+                {products.map(p => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <TextField size="small" label="Qty" type="number" value={item.qty} onChange={e => setItem(idx, 'qty')(e.target.value)} sx={{ width: 70 }} />
+            <TextField size="small" label="Price" type="number" value={item.price} onChange={e => setItem(idx, 'price')(e.target.value)} sx={{ width: 100 }} />
+            <TextField size="small" label="GST %" type="number" value={item.gstRate} onChange={e => setItem(idx, 'gstRate')(e.target.value)} sx={{ width: 70 }} />
+            <IconButton size="small" color="error" onClick={() => removeItem(idx)} disabled={form.items.length === 1}><Delete fontSize="small" /></IconButton>
+          </Box>
         ))}
-
-        <Box mt={2} textAlign="right">
-          <Typography variant="h6" fontWeight={700}>Grand Total: {formatCurrency(grandTotal)}</Typography>
+        <Box textAlign="right" mt={1}>
+          <Typography variant="subtitle2">Grand Total: {formatCurrency(grandTotal)}</Typography>
         </Box>
-
-        <TextField fullWidth label="Notes" value={form.notes} onChange={setField('notes')} size="small" multiline rows={2} sx={{ mt: 2 }} />
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={handleSave} variant="contained" disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
-          {initial?.id ? 'Update' : 'Save Purchase'}
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={handleSave} variant="contained" disabled={saving} startIcon={saving ? <CircularProgress size={16} /> : <Save />}>
+          {initial?.id ? 'Update Purchase' : 'Save Purchase'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -160,70 +124,105 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-
 const PurchaseList = () => {
   const { db } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [rows, setRows] = useState([]);
+
+  const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage] = useState(10);
-  const [search, setSearch] = useState('');
-  const [lastDocs, setLastDocs] = useState([]);
+  const [total, setTotal]     = useState(0);
+  const [page, setPage]       = useState(0);
+  const [cursorMap, setCursorMap] = useState({});
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [searchMonth,     setSearchMonth]     = useState('');
+  const [search,          setSearch]          = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchTimer = useRef(null);
+
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [deleteId, setDeleteId] = useState(null);
-  const [products, setProducts] = useState([]);
+  const [editing,    setEditing]    = useState(null);
+  const [deleteId,   setDeleteId]   = useState(null);
+  const [products,   setProducts]   = useState([]);
 
   useEffect(() => {
-    if (db) fetchProducts();
+    if (!db) return;
+    getDocs(query(collection(db, 'products'), orderBy('name')))
+      .then(s => setProducts(s.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
   }, [db]);
 
-  const fetchProducts = async () => {
-    const snap = await getDocs(query(collection(db, 'products'), orderBy('name')));
-    setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  const handleSearch = val => {
+    setSearch(val);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
   };
 
-  const fetchPurchases = useCallback(async (pg = 0) => {
+  const handleMonthChange = val => {
+    setSearchMonth(val); setSearch(''); setDebouncedSearch(''); setPage(0); setCursorMap({});
+  };
+
+  useEffect(() => {
     if (!db) return;
-    setLoading(true);
-    try {
-      const constraints = [orderBy('createdAt', 'desc'), limit(rowsPerPage)];
-      if (pg > 0 && lastDocs[pg - 1]) constraints.push(startAfter(lastDocs[pg - 1]));
-      const q = query(collection(db, 'purchases'), ...constraints);
-      const snap = await getDocs(q);
-      let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (search.trim()) {
-        const s = search.toLowerCase();
-        docs = docs.filter(d => d.supplierName?.toLowerCase().includes(s) || d.invoiceNumber?.includes(s));
+    let active = true;
+    const run = async () => {
+      setLoading(true);
+      try {
+        // ── MONTH SEARCH MODE ────────────────────────────────────────────
+        if (searchMonth) {
+          const { start, end } = getMonthBounds(searchMonth);
+          const snap = await getDocs(query(
+            collection(db, 'purchases'),
+            where('createdAt', '>=', Timestamp.fromDate(start)),
+            where('createdAt', '<=', Timestamp.fromDate(end)),
+            orderBy('createdAt', 'desc'),
+          ));
+          if (!active) return;
+          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          if (debouncedSearch.trim()) {
+            const s = debouncedSearch.toLowerCase();
+            all = all.filter(r =>
+              r.supplierName?.toLowerCase().includes(s) ||
+              r.invoiceNumber?.toLowerCase().includes(s)
+            );
+          }
+          setTotal(all.length);
+          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
+          return;
+        }
+
+        // ── NORMAL CURSOR PAGINATION ─────────────────────────────────────
+        const constraints = [orderBy('createdAt', 'desc'), limit(PAGE_SIZE)];
+        if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
+
+        const [snap, countSnap] = await Promise.all([
+          getDocs(query(collection(db, 'purchases'), ...constraints)),
+          getCountFromServer(collection(db, 'purchases')),
+        ]);
+        if (!active) return;
+        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setTotal(countSnap.data().count);
+        if (snap.docs.length > 0) setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
+
+      } catch (err) {
+        if (!active) return;
+        toast.error('Failed to load purchases');
+      } finally {
+        if (active) setLoading(false);
       }
-      const countSnap = await getCountFromServer(collection(db, 'purchases'));
-      setTotal(countSnap.data().count);
-      setRows(docs);
-      setLastDocs(prev => { const arr = [...prev]; arr[pg] = snap.docs[snap.docs.length - 1]; return arr; });
-    } catch (err) {
-      toast.error('Failed to load purchases');
-    } finally {
-      setLoading(false);
-    }
-  }, [db, page, search, rowsPerPage]);
+    };
+    run();
+    return () => { active = false; };
+  }, [db, page, searchMonth, debouncedSearch, refreshKey]);
 
-  useEffect(() => { fetchPurchases(page); }, [page]);
+  const resetAndRefetch = () => { setCursorMap({}); setPage(0); setRefreshKey(k => k + 1); };
 
-  const debouncedFetch = useCallback(debounce(() => { setPage(0); fetchPurchases(0); }, 400), [fetchPurchases]);
-  useEffect(() => { debouncedFetch(); }, [search]);
-
-  // ── EDIT: pure delta (newQty − oldQty). CREATE: add new stock ─────────────
   const handleSave = async (form) => {
     try {
       if (editing?.id) {
-        // Read old items from Firestore (source of truth — not UI state)
         const oldSnap = await getDoc(doc(db, 'purchases', editing.id));
         const oldItems = oldSnap.exists() ? (oldSnap.data().items || []) : [];
-
-        // Apply NET delta only. If qty unchanged → delta = 0 → no write.
         await applyInventoryDeltas(db, oldItems, form.items || [], 'purchase');
         await updateDoc(doc(db, 'purchases', editing.id), { ...form, updatedAt: serverTimestamp() });
         toast.success('Purchase updated & inventory reconciled');
@@ -232,53 +231,54 @@ const PurchaseList = () => {
         await applyNewPurchaseInventory(db, form.items || []);
         toast.success('Purchase recorded & inventory updated');
       }
-      fetchPurchases(page);
+      resetAndRefetch();
     } catch (e) {
       toast.error('Failed to save purchase: ' + e.message);
-      throw e; // re-throw so dialog shows error
+      throw e;
     }
   };
 
-  // ── DELETE: reverse all stock this purchase added ─────────────────────────
   const handleDelete = async () => {
     try {
-      const purchaseSnap = await getDoc(doc(db, 'purchases', deleteId));
-      if (purchaseSnap.exists()) {
-        await reversePurchaseInventory(db, purchaseSnap.data().items || []);
-      }
+      const snap = await getDoc(doc(db, 'purchases', deleteId));
+      if (snap.exists()) await reversePurchaseInventory(db, snap.data().items || []);
       await deleteDoc(doc(db, 'purchases', deleteId));
       toast.success('Purchase deleted & inventory updated');
       setDeleteId(null);
-      fetchPurchases(page);
-    } catch (e) {
-      toast.error('Failed to delete purchase: ' + e.message);
-    }
+      resetAndRefetch();
+    } catch (e) { toast.error('Failed to delete purchase: ' + e.message); }
   };
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
-        <Typography variant="h5" fontWeight={700}>Purchases</Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={() => { setEditing(null); setDialogOpen(true); }}>
+        <Box>
+          <Typography variant="h5" fontWeight={700}>Purchases</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {searchMonth ? `${total} results` : `${total} total purchases`}
+          </Typography>
+        </Box>
+        <Button variant="contained" startIcon={<Add />}
+          onClick={() => { setEditing(null); setDialogOpen(true); }}
+          size={isMobile ? 'small' : 'medium'}>
           Record Purchase
         </Button>
       </Box>
 
-      <Card sx={{ mb: 2 }}>
-        <Box sx={{ p: 2 }}>
-          <TextField
-            fullWidth placeholder="Search supplier, invoice..."
-            value={search} onChange={e => setSearch(e.target.value)} size="small"
-            InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }}
-          />
-        </Box>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2, p: 2 }}>
+        <MonthSearchBar
+          selectedMonth={searchMonth} onMonthChange={handleMonthChange}
+          search={search} onSearchChange={handleSearch}
+          searchPlaceholder="Search by supplier or invoice number…"
+          resultCount={searchMonth ? total : undefined} loading={loading}
+        />
       </Card>
 
-      <Card>
+      <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
         <TableContainer>
           <Table size="small">
             <TableHead>
-              <TableRow>
+              <TableRow sx={{ bgcolor: 'grey.50' }}>
                 <TableCell>Supplier</TableCell>
                 {!isMobile && <TableCell>Invoice #</TableCell>}
                 {!isMobile && <TableCell>Date</TableCell>}
@@ -288,66 +288,62 @@ const PurchaseList = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: isMobile ? 4 : 6 }).map((_, j) => (
-                    <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
-                  ))}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={isMobile ? 4 : 6} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">No purchases recorded</Typography>
-                  </TableCell>
-                </TableRow>
-              ) : rows.map(row => (
-                <TableRow key={row.id} hover>
-                  <TableCell>
-                    <Typography variant="body2" fontWeight={600}>{row.supplierName}</Typography>
-                    {isMobile && <Typography variant="caption" color="text.secondary">{formatDate(row.invoiceDate)}</Typography>}
-                  </TableCell>
-                  {!isMobile && <TableCell>{row.invoiceNumber || '-'}</TableCell>}
-                  {!isMobile && <TableCell>{formatDate(row.invoiceDate)}</TableCell>}
-                  <TableCell>{row.items?.length || 0} items</TableCell>
-                  <TableCell>
-                    <Typography fontWeight={600} color="error.main">{formatCurrency(row.grandTotal)}</Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => { setEditing(row); setDialogOpen(true); }}>
-                        <Edit fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton size="small" color="error" onClick={() => setDeleteId(row.id)}>
-                        <Delete fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {loading
+                ? Array.from({ length: PAGE_SIZE }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: isMobile ? 4 : 6 }).map((_, j) => (
+                        <TableCell key={j}><Box sx={{ height: 18, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : rows.length === 0
+                  ? (
+                    <TableRow>
+                      <TableCell colSpan={isMobile ? 4 : 6} align="center" sx={{ py: 6 }}>
+                        <Typography color="text.secondary">
+                          {searchMonth && debouncedSearch
+                            ? `No purchases matching "${debouncedSearch}"`
+                            : searchMonth ? 'No purchases in this month'
+                            : 'No purchases found'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )
+                  : rows.map(row => (
+                      <TableRow key={row.id} hover>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={600}>{row.supplierName}</Typography>
+                          {isMobile && <Typography variant="caption" color="text.secondary">{row.invoiceNumber || '-'}</Typography>}
+                        </TableCell>
+                        {!isMobile && <TableCell>{row.invoiceNumber || '-'}</TableCell>}
+                        {!isMobile && <TableCell><Typography variant="caption">{formatDate(row.invoiceDate || row.createdAt)}</Typography></TableCell>}
+                        <TableCell><Chip label={`${row.items?.length || 0} items`} size="small" variant="outlined" /></TableCell>
+                        <TableCell><Typography variant="body2" fontWeight={600}>{formatCurrency(row.grandTotal)}</Typography></TableCell>
+                        <TableCell align="right">
+                          <IconButton size="small" onClick={() => { setEditing(row); setDialogOpen(true); }}>
+                            <Edit fontSize="small" />
+                          </IconButton>
+                          <IconButton size="small" color="error" onClick={() => setDeleteId(row.id)}>
+                            <Delete fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))
+              }
             </TableBody>
           </Table>
         </TableContainer>
-        <TablePagination
-          component="div" count={total} page={page} rowsPerPage={rowsPerPage}
-          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[10]}
-        />
+        <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+          onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
       </Card>
 
       <PurchaseFormDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onSave={handleSave}
-        initial={editing}
-        products={products}
+        open={dialogOpen} onClose={() => { setDialogOpen(false); setEditing(null); }}
+        onSave={handleSave} initial={editing} products={products}
       />
-
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Purchase?</DialogTitle>
-        <DialogContent>
-          <Typography>This will delete the purchase and reverse its inventory quantities. This action cannot be undone.</Typography>
-        </DialogContent>
+        <DialogContent><Typography>This will reverse inventory changes. Cannot be undone.</Typography></DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteId(null)}>Cancel</Button>
           <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>

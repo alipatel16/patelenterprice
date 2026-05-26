@@ -171,7 +171,10 @@ const generateInvoiceHTML = (sale, installments, company) => {
     </div>
   </div>
   <div class="totals"><div class="tbox">
-    ${!sale.bulkPrice ? `<div class="trow"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>${isGST ? `<div class="trow" style="color:#2563eb"><span>Total GST</span><span>${fmt(sale.totalTax)}</span></div>` : ''}` : ''}
+    ${!sale.bulkPrice ? `
+      <div class="trow"><span>Subtotal</span><span>${fmt((sale.subtotal || 0) - (sale.totalTax || 0))}</span></div>
+      ${isGST ? `<div class="trow" style="color:#2563eb"><span>Total GST</span><span>${fmt(sale.totalTax)}</span></div>` : ''}
+    ` : ''}
     ${sale.hasExchange && sale.exchangeValue > 0 ? `<div class="trow" style="color:#dc2626"><span>Exchange (${sale.exchangeItem})</span><span>− ${fmt(sale.exchangeValue)}</span></div>` : ''}
     <div class="trow big"><span>GRAND TOTAL</span><span>${fmt(sale.grandTotal)}</span></div>
     ${sale.downPayment > 0 ? `<div class="trow" style="color:#16a34a"><span>Down Payment</span><span>${fmt(sale.downPayment)}</span></div>` : ''}
@@ -770,7 +773,11 @@ const SaleDetail = () => {
 
               <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end' }}>
                 {!sale.bulkPrice && [
-                  { label: 'Subtotal', value: formatCurrency(sale.subtotal) },
+                  {
+                    label: 'Subtotal',
+                    // ── CHANGED: show base amount excluding GST ──
+                    value: formatCurrency((sale.subtotal || 0) - (sale.totalTax || 0)),
+                  },
                   ...(sale.invoiceType === 'gst' ? [{ label: 'GST', value: formatCurrency(sale.totalTax), color: 'info.main' }] : []),
                 ].map(({ label, value, color }) => (
                   <Box key={label} display="flex" justifyContent="space-between" width={{ xs: '100%', sm: 280 }}>
