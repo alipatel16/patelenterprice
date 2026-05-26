@@ -247,10 +247,10 @@ const SalesList = () => {
           <Button
             variant="outlined"
             startIcon={<ShowChart />}
-            onClick={() => navigate('/sales/product-movement')}
+            onClick={() => navigate('/product-movement')}
             size={isMobile ? 'small' : 'medium'}
           >
-            {isMobile ? '' : 'Reports'}
+            {isMobile ? 'Reports' : 'Movement Reports'}
           </Button>
           <Button
             variant="contained"
