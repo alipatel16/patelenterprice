@@ -17,6 +17,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { generateInvoiceNumber } from '../../utils';
 import { Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { normalizeCustomer } from '../../utils/normalizeDoc';
+import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
 const COMPLAINT_CATEGORIES = [
   'Television', 'Refrigerator', 'Washing Machine', 'Air Conditioner',
@@ -69,6 +71,7 @@ const CreateComplaint = () => {
   const navigate = useNavigate();
   const isEdit = !!id;
 
+  // customers kept for commented-out Autocomplete reference below
   const [customers, setCustomers] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [brandHierarchies, setBrandHierarchies] = useState([]);
@@ -104,13 +107,13 @@ const CreateComplaint = () => {
     if (!db) return;
     // FIX 4: Load lookups first sequentially, THEN load existing
     const init = async () => {
-      const [custSnap, empSnap, bhSnap] = await Promise.all([
-        getDocs(query(collection(db, 'customers'), orderBy('name'))),
+      // FIX: removed customers getDocs — now handled on-demand by FirestoreAutocomplete.
+      // Employees (~20) and brand hierarchies (~small set) still loaded eagerly.
+      const [empSnap, bhSnap] = await Promise.all([
         getDocs(query(collection(db, 'users'), orderBy('name'))),
         getDocs(query(collection(db, 'brandHierarchies'), orderBy('brandName'))),
       ]);
       const loadedBH = bhSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setEmployees(empSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setBrandHierarchies(loadedBH);
       // FIX 4: pass loadedBH directly — don't rely on state not yet committed
@@ -185,10 +188,12 @@ const CreateComplaint = () => {
   };
 
   const handleAddNewCustomer = async form => {
-    const ref = await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
     setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
+    // Flush search cache so new customer appears in next FirestoreAutocomplete query
+    invalidateSearchCache('customers');
     toast.success('Customer added');
   };
 
@@ -306,7 +311,7 @@ const CreateComplaint = () => {
             <Typography variant="subtitle1" fontWeight={700}>Customer Info</Typography>
             <Button size="small" startIcon={<PersonAdd />} onClick={() => setNewCustomerOpen(true)}>New Customer</Button>
           </Box>
-          <Autocomplete options={customers}
+          {/* <Autocomplete options={customers}
             getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
             value={selectedCustomer} onChange={(_, v) => setSelectedCustomer(v)}
             isOptionEqualToValue={(a, b) => a.id === b.id}
@@ -315,6 +320,24 @@ const CreateComplaint = () => {
               <Box component="li" {...props}>
                 <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>{o.phone} · {o.city}</Typography>
+              </Box>
+            )}
+          /> */}
+          <FirestoreAutocomplete
+            db={db}
+            collectionName="customers"
+            value={selectedCustomer}
+            onChange={(_, v) => setSelectedCustomer(v)}
+            label="Select Customer *"
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            renderOption={(props, o) => (
+              <Box component="li" {...props} key={o.id}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {o.phone}{o.city ? ` · ${o.city}` : ''}
+                  </Typography>
+                </Box>
               </Box>
             )}
           />

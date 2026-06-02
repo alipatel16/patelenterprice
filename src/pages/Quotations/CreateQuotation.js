@@ -20,8 +20,11 @@ import {
   COMPANIES, GST_SLABS, CUSTOMER_TYPES, CUSTOMER_CATEGORIES,
 } from '../../constants';
 import { calculateGST, formatCurrency, generateInvoiceNumber } from '../../utils';
+import { normalizeCustomer } from '../../utils/normalizeDoc';
+import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
-const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs' };
+// FIX: productObj added so FirestoreAutocomplete can show selected product in edit mode
+const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', productObj: null };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
@@ -97,7 +100,7 @@ const CreateQuotation = () => {
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
   const [notes, setNotes] = useState('');
 
-  // Lookups
+  // customers/products kept for commented-out Autocomplete references below
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -110,20 +113,23 @@ const CreateQuotation = () => {
 
   useEffect(() => {
     if (!db) return;
-    loadLookups();
+    // FIX: loadLookups removed — customers/products now fetched on-demand by
+    // FirestoreAutocomplete. Nothing to eagerly load for quotations.
     if (id) loadExistingQuotation();
     else dataLoadedRef.current = true;
     // eslint-disable-next-line
   }, [db]);
 
-  const loadLookups = async () => {
-    const [custSnap, prodSnap] = await Promise.all([
-      getDocs(query(collection(db, 'customers'), orderBy('name'))),
-      getDocs(query(collection(db, 'products'), orderBy('name'))),
-    ]);
-    setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-  };
+  // FIX: loadLookups removed entirely — was fetching ALL customers + products on
+  // every form mount. FirestoreAutocomplete handles search on-demand instead.
+  // const loadLookups = async () => {
+  //   const [custSnap, prodSnap] = await Promise.all([
+  //     getDocs(query(collection(db, 'customers'), orderBy('name'))),
+  //     getDocs(query(collection(db, 'products'), orderBy('name'))),
+  //   ]);
+  //   setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+  //   setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+  // };
 
   const loadExistingQuotation = async () => {
     setLoading(true);
@@ -138,13 +144,18 @@ const CreateQuotation = () => {
         : { id: '__manual__', name: d.customerName, phone: d.customerPhone });
       setQuoteDate(d.quoteDate || new Date().toISOString().split('T')[0]);
       setValidUntil(d.validUntil || '');
+      // FIX: reconstruct productObj from saved item fields so FirestoreAutocomplete
+      // can display the product name in edit mode without loading all products.
       setItems(d.items?.length ? d.items.map(it => ({
-        productId: it.productId || '',
+        productId:   it.productId   || '',
         productName: it.productName || '',
-        qty: it.qty || 1,
-        price: it.price || 0,
-        gstRate: it.gstRate ?? 18,
-        unit: it.unit || 'pcs',
+        qty:         it.qty         || 1,
+        price:       it.price       || 0,
+        gstRate:     it.gstRate     ?? 18,
+        unit:        it.unit        || 'pcs',
+        productObj:  it.productId
+          ? { id: it.productId, name: it.productName, price: it.price, gstRate: it.gstRate, unit: it.unit }
+          : null,
       })) : [{ ...EMPTY_ITEM }]);
       setNotes(d.notes || '');
     } catch (e) {
@@ -158,15 +169,23 @@ const CreateQuotation = () => {
   // ── Item helpers ──
   const updateItem = (i, key, val) => setItems(prev => prev.map((it, idx) => idx === i ? { ...it, [key]: val } : it));
 
+  // FIX: now also sets productObj so FirestoreAutocomplete value prop stays in sync
   const handleProductSelect = (i, product) => {
-    if (!product) { updateItem(i, 'productId', ''); updateItem(i, 'productName', ''); return; }
+    if (!product) {
+      setItems(prev => prev.map((it, idx) => idx === i
+        ? { ...it, productId: '', productName: '', productObj: null }
+        : it
+      ));
+      return;
+    }
     setItems(prev => prev.map((it, idx) => idx === i ? {
       ...it,
-      productId: product.id,
+      productId:   product.id,
       productName: product.name,
-      price: product.price || 0,
-      gstRate: product.gstRate ?? 18,
-      unit: product.unit || 'pcs',
+      price:       product.price    || 0,
+      gstRate:     product.gstRate  ?? 18,
+      unit:        product.unit     || 'pcs',
+      productObj:  product,
     } : it));
   };
 
@@ -184,10 +203,12 @@ const CreateQuotation = () => {
   const grandTotal = subtotal;
 
   const handleAddNewCustomer = async form => {
-    const ref = await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
     setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
+    // Flush search cache so new customer appears in next FirestoreAutocomplete query
+    invalidateSearchCache('customers');
     toast.success('Customer added');
   };
 
@@ -327,7 +348,7 @@ const CreateQuotation = () => {
               New Customer
             </Button>
           </Box>
-          <Autocomplete
+          {/* <Autocomplete
             options={customers}
             getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
             value={selectedCustomer}
@@ -341,6 +362,24 @@ const CreateQuotation = () => {
                 <Box>
                   <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
                   <Typography variant="caption" color="text.secondary">{o.phone} · {o.city}</Typography>
+                </Box>
+              </Box>
+            )}
+          /> */}
+          <FirestoreAutocomplete
+            db={db}
+            collectionName="customers"
+            value={selectedCustomer}
+            onChange={(_, v) => setSelectedCustomer(v)}
+            label="Select Customer *"
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            renderOption={(props, o) => (
+              <Box component="li" {...props} key={o.id}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {o.phone}{o.city ? ` · ${o.city}` : ''}
+                  </Typography>
                 </Box>
               </Box>
             )}
@@ -383,7 +422,7 @@ const CreateQuotation = () => {
                 {items.map((it, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '6px 8px' }}>
-                      <Autocomplete
+                      {/* <Autocomplete
                         options={products}
                         getOptionLabel={o => o.name || ''}
                         value={products.find(p => p.id === it.productId) || null}
@@ -395,6 +434,25 @@ const CreateQuotation = () => {
                             <Box>
                               <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
                               <Typography variant="caption" color="text.secondary">₹{o.price} · {o.unit}</Typography>
+                            </Box>
+                          </Box>
+                        )}
+                      /> */}
+                      <FirestoreAutocomplete
+                        db={db}
+                        collectionName="products"
+                        noPhoneSearch
+                        value={it.productObj || null}
+                        onChange={(_, v) => handleProductSelect(i, v)}
+                        label=""
+                        placeholder="Select product"
+                        getOptionLabel={p => p.name || ''}
+                        isOptionEqualToValue={(a, b) => a.id === b.id}
+                        renderOption={(props, p) => (
+                          <Box component="li" {...props} key={p.id}>
+                            <Box>
+                              <Typography variant="body2" fontWeight={600}>{p.name}</Typography>
+                              <Typography variant="caption" color="text.secondary">₹{p.price} · {p.unit}</Typography>
                             </Box>
                           </Box>
                         )}
@@ -455,13 +513,23 @@ const CreateQuotation = () => {
                   </Box>
                   <Grid container spacing={1.5}>
                     <Grid item xs={12}>
-                      <Autocomplete
+                      {/* <Autocomplete
                         options={products}
                         getOptionLabel={o => o.name || ''}
                         value={products.find(p => p.id === it.productId) || null}
                         onChange={(_, v) => handleProductSelect(i, v)}
                         size="small"
                         renderInput={params => <TextField {...params} label="Product" size="small" />}
+                      /> */}
+                      <FirestoreAutocomplete
+                        db={db}
+                        collectionName="products"
+                        noPhoneSearch
+                        value={it.productObj || null}
+                        onChange={(_, v) => handleProductSelect(i, v)}
+                        label="Product"
+                        getOptionLabel={p => p.name || ''}
+                        isOptionEqualToValue={(a, b) => a.id === b.id}
                       />
                     </Grid>
                     <Grid item xs={6}>

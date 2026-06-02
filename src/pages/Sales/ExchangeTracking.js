@@ -10,7 +10,7 @@ import {
   SwapHoriz, CheckCircle, Search, Refresh, DoneAll, Inbox,
 } from '@mui/icons-material';
 import {
-  collection, query, orderBy, limit,
+  collection, query, where, orderBy, limit,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -89,18 +89,23 @@ const MarkReceivedDialog = ({ open, onClose, sale, onConfirm }) => {
 };
 
 // ─── Pending Exchange Tab ─────────────────────────────────────────────────────
+//
+// FIX: was limit(500) reading ALL sales then client-filtering to hasExchange.
+//      Now queries only sales with hasExchange === true server-side.
+//
+// ⚠️  COMPOSITE INDEX REQUIRED on first run:
+//      Collection : sales
+//      Fields     : hasExchange (Ascending) + saleDate (Descending)
+//      Firestore will log a clickable auto-create URL in the console.
 
 const PendingExchangeTab = ({ db, onReceived }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  // ── All pending exchange docs fetched once ──────────────────────────────
   const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // ── UI state ────────────────────────────────────────────────────────────
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -116,25 +121,28 @@ const PendingExchangeTab = ({ db, onReceived }) => {
     }, 400);
   };
 
-  // ── Fetch all pending exchange sales once ───────────────────────────────
-  // Pending exchanges are typically very few (5–20 at a time).
-  // Fetching all and paginating in memory gives correct results.
   useEffect(() => {
     if (!db) return;
     let active = true;
     const load = async () => {
       setLoading(true);
       try {
+        // ── FIX: server-side filter on hasExchange ───────────────────────
+        // Before: limit(500) read every recent sale, discarding ~490 of them.
+        // After:  Firestore returns ONLY exchange sales (typically 5–20).
+        // The client-side exchangeReceived !== true check stays to handle
+        // legacy docs created before the exchangeReceived field existed.
         const snap = await getDocs(query(
           collection(db, 'sales'),
+          where('hasExchange', '==', true),
           orderBy('saleDate', 'desc'),
-          limit(500),
+          limit(200),                            // safety cap; was 500
         ));
         if (!active) return;
-        const filtered = snap.docs
+        const docs = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.hasExchange === true && d.exchangeReceived !== true);
-        setAllDocs(filtered);
+          .filter(d => d.exchangeReceived !== true);  // exclude already-received
+        setAllDocs(docs);
       } catch (err) {
         if (!active) return;
         toast.error('Failed to load exchange items: ' + err.message);
@@ -146,18 +154,16 @@ const PendingExchangeTab = ({ db, onReceived }) => {
     return () => { active = false; };
   }, [db, refreshKey]);
 
-  // ── Search filter — zero extra reads ───────────────────────────────────
   const filtered = useMemo(() => {
     if (!debouncedSearch.trim()) return allDocs;
     const s = debouncedSearch.toLowerCase();
     return allDocs.filter(d =>
       (d.invoiceNumber || '').toLowerCase().includes(s) ||
-      (d.customerName || '').toLowerCase().includes(s) ||
-      (d.exchangeItem || '').toLowerCase().includes(s)
+      (d.customerName  || '').toLowerCase().includes(s) ||
+      (d.exchangeItem  || '').toLowerCase().includes(s)
     );
   }, [allDocs, debouncedSearch]);
 
-  // ── Paginated slice — correct total and page ────────────────────────────
   const pageRows = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [filtered, page]
@@ -292,13 +298,19 @@ const PendingExchangeTab = ({ db, onReceived }) => {
 };
 
 // ─── Received Exchange Tab ────────────────────────────────────────────────────
+//
+// FIX: was limit(500) reading ALL sales then client-filtering to exchangeReceived.
+//      Now queries only received exchanges server-side.
+//
+// ⚠️  COMPOSITE INDEX REQUIRED on first run:
+//      Collection : sales
+//      Fields     : exchangeReceived (Ascending) + saleDate (Descending)
 
 const ReceivedExchangeTab = ({ db, refresh }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  // ── All received exchange docs fetched once ─────────────────────────────
   const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
@@ -310,17 +322,22 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
 
     const load = async () => {
       try {
+        // ── FIX: server-side filter on exchangeReceived ──────────────────
+        // Before: limit(500) read every recent sale, then filtered in memory.
+        // After:  Firestore returns ONLY received exchange sales.
         const snap = await getDocs(query(
           collection(db, 'sales'),
+          where('exchangeReceived', '==', true),
           orderBy('saleDate', 'desc'),
-          limit(500),
+          limit(200),                            // safety cap; was 500
         ));
         if (!active) return;
-        const receivedDocs = snap.docs
+        // Sort by exchange received date (newest first); in memory because
+        // exchangeReceivedDate may be absent on older records.
+        const docs = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.exchangeReceived === true)
           .sort((a, b) => (b.exchangeReceivedDate || '').localeCompare(a.exchangeReceivedDate || ''));
-        setAllDocs(receivedDocs);
+        setAllDocs(docs);
         setPage(0);
       } catch (err) {
         if (!active) return;

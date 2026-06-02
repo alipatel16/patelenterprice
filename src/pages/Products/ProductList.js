@@ -23,6 +23,7 @@ import { toast } from 'react-toastify';
 import { GST_SLABS } from '../../constants';
 import { formatCurrency } from '../../utils';
 import MonthSearchBar from '../../components/MonthSearchBar';
+import { normalizeProduct } from '../../utils/normalizeDoc';
 
 const PAGE_SIZE = 10;
 
@@ -183,10 +184,10 @@ const ProductList = () => {
 
   const handleSave = async form => {
     if (editing?.id) {
-      await updateDoc(doc(db, 'products', editing.id), { ...form, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'products', editing.id), { ...normalizeProduct(form), updatedAt: serverTimestamp() });
       toast.success('Product updated');
     } else {
-      await addDoc(collection(db, 'products'), { ...form, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      await addDoc(collection(db, 'products'), { ...normalizeProduct(form), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       toast.success('Product added');
     }
     resetAndRefetch();

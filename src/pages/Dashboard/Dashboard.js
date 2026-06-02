@@ -1,3 +1,24 @@
+// src/pages/Dashboard/Dashboard.js
+//
+// ─── READ-COUNT FIXES ─────────────────────────────────────────────────────────
+//
+//  BEFORE: fetchStats (2 getDocs) + fetchChartData (7 getDocs in a loop) =
+//          9 Firestore queries per dashboard load, each reading full sales
+//          documents.  With 20 users × 3 visits = 60 dashboard loads/day,
+//          that consumed ≈ 9 × 30 docs × 60 = 16 200 reads/day just from
+//          the dashboard.
+//
+//  AFTER:  fetchAllData — ONE merged function with AT MOST 2 getDocs:
+//            • salesSnap  — stats range (createdAt ≥ start, ≤ end)
+//            • chartSnap  — last 7 days (only if NOT already covered by
+//                           salesSnap, e.g. when range is "monthly" early
+//                           in the month the chart window IS inside the
+//                           stats window — zero extra reads needed)
+//          getCountFromServer calls remain (they cost 0 reads on Spark).
+//          todaySales is derived from chartSnap in memory — no 3rd query.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect } from 'react';
 import {
   Box, Grid, Card, CardContent, Typography, Button, Chip,
@@ -21,6 +42,8 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency } from '../../utils';
 import dayjs from 'dayjs';
+
+// ─── Sub-components (unchanged) ───────────────────────────────────────────────
 
 const StatCard = ({ title, value, subtitle, icon, color, trend, loading }) => {
   const theme = useTheme();
@@ -75,6 +98,8 @@ const QuickAction = ({ label, icon, color, onClick }) => (
   </Button>
 );
 
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 const Dashboard = () => {
   const { db, userProfile, storeType } = useAuth();
   const navigate = useNavigate();
@@ -84,16 +109,15 @@ const Dashboard = () => {
   const [stats, setStats] = useState({
     totalSales: 0, totalCustomers: 0, totalProducts: 0,
     totalPurchases: 0, pendingSales: 0, todaySales: 0,
-    invoiceCount: 0,                                      // ← new
+    invoiceCount: 0,
   });
   const [chartData, setChartData] = useState([]);
   const [customStart, setCustomStart] = useState(dayjs().subtract(7, 'day').format('YYYY-MM-DD'));
-  const [customEnd, setCustomEnd] = useState(dayjs().format('YYYY-MM-DD'));
+  const [customEnd, setCustomEnd]     = useState(dayjs().format('YYYY-MM-DD'));
 
   useEffect(() => {
     if (!db) return;
-    fetchStats();
-    fetchChartData();
+    fetchAllData();
   }, [db, range, customStart, customEnd]);
 
   const getDateRange = () => {
@@ -104,69 +128,101 @@ const Dashboard = () => {
     return { start: now.startOf('month'), end: now.endOf('month') };
   };
 
-  const fetchStats = async () => {
+  // ─── COMBINED DATA FETCH ───────────────────────────────────────────────────
+  // Max 2 getDocs instead of the old 9 (2 stats + 7 chart).
+  // getCountFromServer is FREE on every Firestore plan.
+  const fetchAllData = async () => {
     setLoading(true);
     try {
+      const today     = dayjs();
       const { start, end } = getDateRange();
-      const startTs = Timestamp.fromDate(start.toDate());
-      const endTs   = Timestamp.fromDate(end.toDate());
+      const startTs   = Timestamp.fromDate(start.toDate());
+      const endTs     = Timestamp.fromDate(end.toDate());
 
-      const [custSnap, prodSnap, salesSnap, purchaseSnap, pendingSnap] = await Promise.all([
+      // 7-day window for the bar chart
+      const chartStart = today.subtract(6, 'day').startOf('day');
+      const chartEnd   = today.endOf('day');
+      const chartStartTs = Timestamp.fromDate(chartStart.toDate());
+      const chartEndTs   = Timestamp.fromDate(chartEnd.toDate());
+
+      // ── Free count queries (0 read cost) ─────────────────────────────
+      const [custSnap, prodSnap, purchaseSnap, pendingSnap] = await Promise.all([
         getCountFromServer(collection(db, 'customers')),
         getCountFromServer(collection(db, 'products')),
-        getDocs(query(collection(db, 'sales'), where('createdAt', '>=', startTs), where('createdAt', '<=', endTs))),
         getCountFromServer(collection(db, 'purchases')),
         getCountFromServer(query(collection(db, 'sales'), where('paymentType', '==', 'pending_payment'))),
       ]);
 
-      const totalSales   = salesSnap.docs.reduce((sum, d) => sum + (d.data().grandTotal || 0), 0);
-      const invoiceCount = salesSnap.size;               // ← count of invoices in selected range
-
-      // Today's sales
-      const todayStart = Timestamp.fromDate(dayjs().startOf('day').toDate());
-      const todayEnd   = Timestamp.fromDate(dayjs().endOf('day').toDate());
-      const todaySnap  = await getDocs(query(
+      // ── Stats query (1 getDocs) ───────────────────────────────────────
+      const salesSnap = await getDocs(query(
         collection(db, 'sales'),
-        where('createdAt', '>=', todayStart),
-        where('createdAt', '<=', todayEnd),
+        where('createdAt', '>=', startTs),
+        where('createdAt', '<=', endTs),
       ));
-      const todaySales = todaySnap.docs.reduce((sum, d) => sum + (d.data().grandTotal || 0), 0);
+
+      // ── Chart query (0 or 1 getDocs) ─────────────────────────────────
+      // If the 7-day chart window is FULLY contained within the already-
+      // fetched stats window, reuse salesSnap docs — 0 extra reads.
+      const chartIsInStatsRange =
+        chartStart.valueOf() >= start.valueOf() &&
+        chartEnd.valueOf()   <= end.valueOf();
+
+      let chartDocs;
+      if (chartIsInStatsRange) {
+        chartDocs = salesSnap.docs;  // free reuse
+      } else {
+        const chartSnap = await getDocs(query(
+          collection(db, 'sales'),
+          where('createdAt', '>=', chartStartTs),
+          where('createdAt', '<=', chartEndTs),
+        ));
+        chartDocs = chartSnap.docs;
+      }
+
+      // ── Derive stats from salesSnap ───────────────────────────────────
+      const totalSales   = salesSnap.docs.reduce((s, d) => s + (d.data().grandTotal || 0), 0);
+      const invoiceCount = salesSnap.size;
+
+      // ── Derive today's sales from chartDocs in memory (no 3rd query) ─
+      const todayKey = today.format('YYYY-MM-DD');
+      const todaySales = chartDocs
+        .filter(d => {
+          const ts = d.data().createdAt;
+          return ts && dayjs(ts.toDate()).format('YYYY-MM-DD') === todayKey;
+        })
+        .reduce((s, d) => s + (d.data().grandTotal || 0), 0);
 
       setStats({
         totalSales,
-        invoiceCount,                                     // ← new
+        invoiceCount,
         totalCustomers: custSnap.data().count,
         totalProducts:  prodSnap.data().count,
         totalPurchases: purchaseSnap.data().count,
         pendingSales:   pendingSnap.data().count,
         todaySales,
       });
+
+      // ── Build 7-day chart from chartDocs in memory ───────────────────
+      const dayMap = {};
+      for (let i = 6; i >= 0; i--) {
+        const d = today.subtract(i, 'day');
+        dayMap[d.format('YYYY-MM-DD')] = { day: d.format('DD MMM'), sales: 0, count: 0 };
+      }
+      chartDocs.forEach(doc => {
+        const data = doc.data();
+        if (!data.createdAt) return;
+        const key = dayjs(data.createdAt.toDate()).format('YYYY-MM-DD');
+        if (dayMap[key]) {
+          dayMap[key].sales += data.grandTotal || 0;
+          dayMap[key].count += 1;
+        }
+      });
+      setChartData(Object.values(dayMap));
+
     } catch (err) {
-      console.error(err);
+      console.error('[Dashboard] fetchAllData error:', err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchChartData = async () => {
-    try {
-      const days = [];
-      const today = dayjs();
-      for (let i = 6; i >= 0; i--) {
-        const day   = today.subtract(i, 'day');
-        const start = Timestamp.fromDate(day.startOf('day').toDate());
-        const end   = Timestamp.fromDate(day.endOf('day').toDate());
-        const snap  = await getDocs(query(
-          collection(db, 'sales'),
-          where('createdAt', '>=', start),
-          where('createdAt', '<=', end),
-        ));
-        const amount = snap.docs.reduce((s, d) => s + (d.data().grandTotal || 0), 0);
-        days.push({ day: day.format('DD MMM'), sales: amount, count: snap.size });
-      }
-      setChartData(days);
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -211,42 +267,33 @@ const Dashboard = () => {
           <StatCard title="Today's Sales" value={formatCurrency(stats.todaySales)} icon={<AttachMoney />} color="success" loading={loading} />
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
-          <StatCard title="Pending Payments" value={stats.pendingSales} subtitle="invoices pending" icon={<Pending />} color="warning" loading={loading} />
+          <StatCard title={`Invoices (${range === 'daily' ? 'Today' : range === 'monthly' ? 'This Month' : 'Range'})`} value={stats.invoiceCount} icon={<Receipt />} color="info" loading={loading} />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Customers" value={stats.totalCustomers} icon={<People />} color="info" loading={loading} />
+          <StatCard title="Total Customers" value={stats.totalCustomers} icon={<People />} color="secondary" loading={loading} />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Products" value={stats.totalProducts} icon={<Inventory2 />} color="secondary" loading={loading} />
+          <StatCard title="Total Products" value={stats.totalProducts} icon={<Inventory2 />} color="warning" loading={loading} />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Purchases" value={stats.totalPurchases} icon={<LocalShipping />} color="primary" loading={loading} />
+          <StatCard title="Purchases" value={stats.totalPurchases} icon={<ShoppingCart />} color="error" loading={loading} />
         </Grid>
-
-        {/* ── Invoices Raised ── */}
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Invoices Raised"
-            value={stats.invoiceCount}
-            subtitle="in selected period"
-            icon={<Receipt />}
-            color="success"
-            loading={loading}
-          />
+          <StatCard title="Pending Payments" value={stats.pendingSales} icon={<Pending />} color="warning" loading={loading} />
         </Grid>
       </Grid>
 
       {/* Chart + Quick Actions */}
       <Grid container spacing={2}>
         <Grid item xs={12} md={8}>
-          <Card>
+          <Card sx={{ height: '100%' }}>
             <CardContent>
-              <Typography variant="subtitle1" fontWeight={600} mb={2}>Sales — Last 7 Days</Typography>
+              <Typography variant="subtitle1" fontWeight={600} mb={2}>Sales – Last 7 Days</Typography>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
                   <Tooltip formatter={v => formatCurrency(v)} />
                   <Bar dataKey="sales" fill={theme.palette.primary.main} radius={[4, 4, 0, 0]} name="Sales" />
                 </BarChart>

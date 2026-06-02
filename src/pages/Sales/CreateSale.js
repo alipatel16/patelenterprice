@@ -28,8 +28,11 @@ import {
   applyInventoryDeltas,
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
+import { normalizeCustomer } from '../../utils/normalizeDoc';
+import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
-const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '', hsnCode: '' };
+// FIX: productObj added so FirestoreAutocomplete can show the selected product in edit mode
+const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, unit: 'pcs', description: '', hsnCode: '', productObj: null };
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
@@ -168,6 +171,7 @@ const CreateSale = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // customers/products kept for commented-out Autocomplete references below
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventory, setInventory] = useState({});
@@ -211,16 +215,14 @@ const CreateSale = () => {
     else dataLoadedRef.current = true;
   }, [db]);
 
+  // FIX: Only load employees (20 docs) and inventory — customers/products now
+  // fetched on-demand by FirestoreAutocomplete as the user types (0 reads on mount).
   const loadLookups = async () => {
-    const [custSnap, prodSnap, empSnap] = await Promise.all([
-      getDocs(query(collection(db, 'customers'), orderBy('name'))),
-      getDocs(query(collection(db, 'products'), orderBy('name'))),
+    const [empSnap, invSnap] = await Promise.all([
       getDocs(query(collection(db, 'users'), orderBy('name'))),
+      getDocs(collection(db, 'inventory')),
     ]);
-    setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setEmployees(empSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    const invSnap = await getDocs(collection(db, 'inventory'));
     const invMap = {};
     invSnap.docs.forEach(d => { invMap[d.data().productId] = d.data().stock || 0; });
     setInventory(invMap);
@@ -237,7 +239,14 @@ const CreateSale = () => {
       setSelectedCustomer(d.customerId ? { id: d.customerId, name: d.customerName, phone: d.customerPhone } : null);
       setSalesperson(d.salesperson || '');
       setSaleDate(d.saleDate || '');
-      setItems(d.items || [{ ...EMPTY_ITEM }]);
+      // FIX: reconstruct productObj from saved item fields so FirestoreAutocomplete
+      // can display the product name in edit mode without loading all products.
+      setItems((d.items || []).map(it => ({
+        ...it,
+        productObj: it.productId
+          ? { id: it.productId, name: it.productName, price: it.price, gstRate: it.gstRate, unit: it.unit, hsnCode: it.hsnCode }
+          : null,
+      })));
       setNotes(d.notes || '');
       setHasExchange(d.hasExchange || false);
       setExchangeItem(d.exchangeItem || '');
@@ -271,11 +280,29 @@ const CreateSale = () => {
     setPaymentType(newType);
   };
 
+  // FIX: supports two call signatures:
+  //   setItemField(idx, 'qty')(newQty)          — single field (existing)
+  //   setItemField(idx)({ productId, ... })     — multi-field (new, used by FirestoreAutocomplete onChange)
   const setItemField = (idx, k) => val => {
     setItems(prev => {
       const arr = [...prev];
+
+      // Multi-field update: setItemField(idx)({ productId, productName, price, ... })
+      if (k === undefined) {
+        arr[idx] = { ...arr[idx], ...val };
+        // Preserve stock warnings when product is selected via FirestoreAutocomplete
+        if (val.productId) {
+          const stock = inventory[val.productId] || 0;
+          if (stock <= 0) toast.warning(`⚠️ ${val.productName} is OUT OF STOCK!`);
+          else if (stock < (arr[idx].qty || 1)) toast.warning(`⚠️ Only ${stock} units of ${val.productName} in stock`);
+        }
+        return arr;
+      }
+
       arr[idx] = { ...arr[idx], [k]: val };
       if (k === 'productId') {
+        // Dead code path — products[] is always [] since we switched to FirestoreAutocomplete.
+        // Kept for backward compatibility in case setItemField('productId') is called elsewhere.
         const prod = products.find(p => p.id === val);
         if (prod) {
           arr[idx].productName = prod.name;
@@ -347,10 +374,12 @@ const CreateSale = () => {
   };
 
   const handleAddNewCustomer = async form => {
-    const ref = await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
     setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
+    // Flush search cache so new customer appears in next FirestoreAutocomplete query
+    invalidateSearchCache('customers');
     toast.success('Customer added');
   };
 
@@ -615,13 +644,31 @@ const CreateSale = () => {
               New Customer
             </Button>
           </Box>
-          <Autocomplete
+          {/* <Autocomplete
             options={customers}
             getOptionLabel={c => `${c.name} — ${c.phone}`}
             value={selectedCustomer}
             onChange={(_, v) => setSelectedCustomer(v)}
             renderInput={params => <TextField {...params} label="Select Customer *" size="small" />}
             isOptionEqualToValue={(o, v) => o.id === v.id}
+          /> */}
+          <FirestoreAutocomplete
+            db={db}
+            collectionName="customers"
+            value={selectedCustomer}
+            onChange={(_, v) => setSelectedCustomer(v)}
+            label="Select Customer *"
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            renderOption={(props, o) => (
+              <Box component="li" {...props} key={o.id}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {o.phone}{o.city ? ` · ${o.city}` : ''}
+                  </Typography>
+                </Box>
+              </Box>
+            )}
           />
           {selectedCustomer && (
             <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}>
@@ -674,7 +721,7 @@ const CreateSale = () => {
                 <Grid container spacing={1} alignItems="center">
                   {/* Product */}
                   <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
-                    <Autocomplete
+                    {/* <Autocomplete
                       fullWidth
                       size="small"
                       options={products}
@@ -694,6 +741,39 @@ const CreateSale = () => {
                       )}
                       renderInput={params => (
                         <TextField {...params} label="Product *" size="small" />
+                      )}
+                    /> */}
+                    <FirestoreAutocomplete
+                      db={db}
+                      collectionName="products"
+                      noPhoneSearch
+                      value={item.productObj || null}
+                      onChange={(_, v) => {
+                        // Update all product-related fields in one go
+                        setItemField(idx)({
+                          productId:   v?.id          || '',
+                          productName: v?.name        || '',
+                          price:       v?.price       ?? 0,
+                          gstRate:     v?.gstRate     ?? 18,
+                          unit:        v?.unit        || 'pcs',
+                          hsnCode:     v?.hsnCode     || '',
+                          description: v?.description || '',
+                          productObj:  v || null,
+                        });
+                      }}
+                      label="Product *"
+                      getOptionLabel={p => p.name || ''}
+                      isOptionEqualToValue={(a, b) => a.id === b.id}
+                      renderOption={(props, p) => (
+                        <Box component="li" {...props} key={p.id}>
+                          <Box>
+                            <Typography variant="body2">{p.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              ₹{p.price} · Stock: {inventory[p.id] || 0}
+                              {p.maker ? ` · ${p.maker}` : ''}
+                            </Typography>
+                          </Box>
+                        </Box>
                       )}
                     />
                   </Grid>

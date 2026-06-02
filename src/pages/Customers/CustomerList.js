@@ -27,6 +27,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { CUSTOMER_TYPES, CUSTOMER_CATEGORIES } from '../../constants';
 import MonthSearchBar from '../../components/MonthSearchBar';
+import { normalizeCustomer } from '../../utils/normalizeDoc';
 
 const PAGE_SIZE = 10;
 
@@ -205,10 +206,10 @@ const CustomerList = () => {
 
   const handleSave = async form => {
     if (editing?.id) {
-      await updateDoc(doc(db, 'customers', editing.id), { ...form, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'customers', editing.id), { ...normalizeCustomer(form), updatedAt: serverTimestamp() });
       toast.success('Customer updated');
     } else {
-      await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
+      await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
       toast.success('Customer added');
     }
     resetAndRefetch();

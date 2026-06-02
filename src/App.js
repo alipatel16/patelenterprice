@@ -48,6 +48,7 @@ import ChecklistAdminView from './pages/Employees/ChecklistAdminView';
 import PenaltySettings from './pages/Employees/PenaltySettings';
 import SalaryReport from './pages/Employees/SalaryReport';
 import EmployeeSalesReport from './pages/Sales/EmployeeSalesReport';
+import DataMigrationUtil from './components/DataMigrationUtil';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -125,6 +126,9 @@ const AppContent = () => {
           <Route path="checklist-status"             element={<ChecklistAdminView />} />
           <Route path="penalty-settings"             element={<PenaltySettings />} />
           <Route path="salary-report"                element={<SalaryReport />} />
+
+          {/* Migration Route */}
+          <Route path="admin/migrate" element={<DataMigrationUtil />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

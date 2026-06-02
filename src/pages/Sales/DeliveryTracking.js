@@ -11,7 +11,7 @@ import {
   DoneAll, CalendarMonth,
 } from '@mui/icons-material';
 import {
-  collection, query, orderBy, limit,
+  collection, query, where, orderBy, limit,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -78,18 +78,23 @@ const MarkDeliveredDialog = ({ open, onClose, sale, onConfirm }) => {
 };
 
 // ─── Pending Deliveries Tab ───────────────────────────────────────────────────
+//
+// FIX: was limit(500) reading ALL sales then client-filtering.
+//      Now queries only scheduled deliveries server-side.
+//
+// ⚠️  COMPOSITE INDEX REQUIRED on first run:
+//      Collection : sales
+//      Fields     : deliveryType (Ascending) + saleDate (Descending)
+//      Firestore will log a clickable auto-create URL in the console.
 
 const PendingDeliveriesTab = ({ db, onDelivered }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  // ── All pending delivery docs fetched once ──────────────────────────────
   const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // ── UI state ────────────────────────────────────────────────────────────
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -105,26 +110,29 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
     }, 400);
   };
 
-  // ── Fetch all scheduled+undelivered sales once ──────────────────────────
-  // These are operational records — typically 10-30 items at most.
-  // Fetching all at once and paginating in memory gives correct pagination.
   useEffect(() => {
     if (!db) return;
     let active = true;
     const load = async () => {
       setLoading(true);
       try {
+        // ── FIX: server-side filter on deliveryType ──────────────────────
+        // Before: limit(500) read every recent sale, discarding ~490 of them.
+        // After:  Firestore returns ONLY scheduled sales (typically 10–30).
+        // The client-side isDelivered !== true check stays to handle legacy
+        // docs created before the isDelivered field existed.
         const snap = await getDocs(query(
           collection(db, 'sales'),
+          where('deliveryType', '==', 'scheduled'),
           orderBy('saleDate', 'desc'),
-          limit(500),
+          limit(200),                          // safety cap; was 500
         ));
         if (!active) return;
-        const filtered = snap.docs
+        const docs = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.deliveryType === 'scheduled' && d.isDelivered !== true)
+          .filter(d => d.isDelivered !== true)  // exclude already-delivered
           .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
-        setAllDocs(filtered);
+        setAllDocs(docs);
       } catch (err) {
         if (!active) return;
         toast.error('Failed to load deliveries: ' + err.message);
@@ -136,18 +144,16 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
     return () => { active = false; };
   }, [db, refreshKey]);
 
-  // ── Search filter — zero extra reads ───────────────────────────────────
   const filtered = useMemo(() => {
     if (!debouncedSearch.trim()) return allDocs;
     const s = debouncedSearch.toLowerCase();
     return allDocs.filter(d =>
       (d.invoiceNumber || '').toLowerCase().includes(s) ||
-      (d.customerName || '').toLowerCase().includes(s) ||
+      (d.customerName  || '').toLowerCase().includes(s) ||
       (d.customerPhone || '').includes(s)
     );
   }, [allDocs, debouncedSearch]);
 
-  // ── Paginated slice — correct total and page ────────────────────────────
   const pageRows = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [filtered, page]
@@ -167,10 +173,8 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
     onDelivered();
   };
 
-  const isOverdue = (deliveryDate) => {
-    if (!deliveryDate) return false;
-    return new Date(deliveryDate) < new Date();
-  };
+  const isOverdue = (deliveryDate) =>
+    deliveryDate ? new Date(deliveryDate) < new Date() : false;
 
   return (
     <Box>
@@ -307,13 +311,19 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
 };
 
 // ─── Recently Delivered Tab ───────────────────────────────────────────────────
+//
+// FIX: was limit(500) reading ALL sales then client-filtering to isDelivered.
+//      Now queries only delivered sales server-side.
+//
+// ⚠️  COMPOSITE INDEX REQUIRED on first run:
+//      Collection : sales
+//      Fields     : isDelivered (Ascending) + saleDate (Descending)
 
 const RecentlyDeliveredTab = ({ db, refresh }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  // ── All delivered docs fetched once ────────────────────────────────────
   const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
@@ -325,17 +335,23 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
 
     const load = async () => {
       try {
+        // ── FIX: server-side filter on isDelivered ───────────────────────
+        // Before: limit(500) read every recent sale, then filtered in memory.
+        // After:  Firestore returns ONLY delivered sales.
         const snap = await getDocs(query(
           collection(db, 'sales'),
+          where('isDelivered', '==', true),
           orderBy('saleDate', 'desc'),
-          limit(500),
+          limit(200),                          // safety cap; was 500
         ));
         if (!active) return;
-        const deliveredDocs = snap.docs
+        // Sort by actual delivery date (newest first); done in memory since
+        // actualDeliveryDate is not a reliable sort field server-side
+        // (older records may not have it).
+        const docs = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.isDelivered === true)
           .sort((a, b) => (b.actualDeliveryDate || '').localeCompare(a.actualDeliveryDate || ''));
-        setAllDocs(deliveredDocs);
+        setAllDocs(docs);
         setPage(0);
       } catch (err) {
         if (!active) return;

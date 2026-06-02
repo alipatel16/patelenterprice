@@ -19,6 +19,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { COMPANIES, CUSTOMER_TYPES, CUSTOMER_CATEGORIES } from '../../constants';
 import { generateInvoiceNumber, formatCurrency } from '../../utils';
+import { normalizeCustomer } from '../../utils/normalizeDoc';
+import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
 const COMPANY = COMPANIES['company_1'];
 
@@ -130,6 +132,7 @@ const CreateGiftInvoice = () => {
   const navigate = useNavigate();
   const isEdit = !!id;
 
+  // customers kept for commented-out Autocomplete reference below
   const [customers, setCustomers] = useState([]);
   const [giftSets, setGiftSets] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -151,12 +154,12 @@ const CreateGiftInvoice = () => {
     // eslint-disable-next-line
   }, [db]);
 
+  // FIX: removed customers getDocs — now handled on-demand by FirestoreAutocomplete.
+  // Gift sets are a small bounded collection (~10–30) so still loaded eagerly.
   const loadLookups = async () => {
-    const [custSnap, gsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'customers'), orderBy('name'))),
-      getDocs(query(collection(db, 'giftSets'), orderBy('createdAt', 'desc'))),
-    ]);
-    setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    // const custSnap = await getDocs(query(collection(db, 'customers'), orderBy('name')));
+    // setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const gsSnap = await getDocs(query(collection(db, 'giftSets'), orderBy('createdAt', 'desc')));
     setGiftSets(gsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
@@ -195,10 +198,12 @@ const CreateGiftInvoice = () => {
   };
 
   const handleAddNewCustomer = async form => {
-    const ref = await addDoc(collection(db, 'customers'), { ...form, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
     setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
+    // Flush search cache so new customer appears in next FirestoreAutocomplete query
+    invalidateSearchCache('customers');
     toast.success('Customer added');
   };
 
@@ -301,7 +306,7 @@ const CreateGiftInvoice = () => {
               New Customer
             </Button>
           </Box>
-          <Autocomplete
+          {/* <Autocomplete
             options={customers}
             getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
             value={selectedCustomer}
@@ -316,6 +321,24 @@ const CreateGiftInvoice = () => {
                 <Box>
                   <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
                   <Typography variant="caption" color="text.secondary">{o.phone} · {o.city}</Typography>
+                </Box>
+              </Box>
+            )}
+          /> */}
+          <FirestoreAutocomplete
+            db={db}
+            collectionName="customers"
+            value={selectedCustomer}
+            onChange={(_, v) => setSelectedCustomer(v)}
+            label="Select Customer *"
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            renderOption={(props, o) => (
+              <Box component="li" {...props} key={o.id}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {o.phone}{o.city ? ` · ${o.city}` : ''}
+                  </Typography>
                 </Box>
               </Box>
             )}
