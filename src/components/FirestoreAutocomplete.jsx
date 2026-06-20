@@ -20,6 +20,15 @@
 //   • All future saves must include:  nameLower: formData.name.toLowerCase()
 //     (use the helper from normalizeDoc.js)
 //
+// OPTIONAL — onOptionsChange:
+//   Fires whenever a fresh set of search results is rendered (cache hit or
+//   live fetch), passing the array of option objects currently shown in the
+//   dropdown. Useful when the host form needs extra per-option data that
+//   isn't part of the base document — e.g. CreateSale uses this to fetch
+//   live stock counts only for the products currently visible in the
+//   dropdown, instead of pre-loading the whole inventory collection.
+//   Optional and fully backward compatible — omit it and nothing changes.
+//
 // USAGE:
 //   // Customer autocomplete (drop-in for <Autocomplete options={customers} .../>)
 //   <FirestoreAutocomplete
@@ -37,19 +46,20 @@
 //     )}
 //   />
 //
-//   // Product autocomplete
+//   // Product autocomplete with live stock lookup for visible results
 //   <FirestoreAutocomplete
 //     db={db}
 //     collectionName="products"
 //     value={selectedProduct}
 //     onChange={(_, v) => handleProductSelect(v)}
+//     onOptionsChange={(options) => fetchStockFor(options.map(o => o.id))}
 //     label="Product *"
-//     noPhoneSearch       // products don't have phone numbers
+//     noPhoneSearch
 //     renderOption={(props, p) => (
 //       <Box component="li" {...props}>
 //         <Typography variant="body2">{p.name}</Typography>
 //         <Typography variant="caption" color="text.secondary">
-//           ₹{p.price} · Stock: {inventory[p.id] || 0}
+//           ₹{p.price} · Stock: {inventory[p.id] ?? '...'}
 //         </Typography>
 //       </Box>
 //     )}
@@ -89,7 +99,7 @@ const FirestoreAutocomplete = ({
   phoneField     = 'phone',       // Firestore field for phone prefix search
   noPhoneSearch  = false,         // set true for collections without phone (e.g. products)
   minChars       = 2,
-  maxResults     = 30,
+  maxResults     = 15,
   debounceMs     = 300,
 
   // ── MUI Autocomplete passthrough ──
@@ -106,6 +116,10 @@ const FirestoreAutocomplete = ({
 
   // ── Extra filters (array of Firestore where constraints) ──
   extraConstraints = [],
+
+  // ── Optional: notified with the current list of visible options whenever
+  // a new search result set (cache hit or live fetch) is rendered ──
+  onOptionsChange,
 }) => {
   const [inputValue,   setInputValue]   = useState('');
   const [options,      setOptions]      = useState([]);
@@ -119,7 +133,7 @@ const FirestoreAutocomplete = ({
     if (value && !options.find(o => o.id === value.id)) {
       setOptions(prev => [value, ...prev.filter(o => o.id !== value.id)]);
     }
-  }, [value]);
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Firestore prefix search ────────────────────────────────────────────────
   const search = useCallback(async (raw) => {
@@ -142,6 +156,7 @@ const FirestoreAutocomplete = ({
         : cached;
       setOptions(merged);
       setLoading(false);
+      onOptionsChange?.(merged);
       return;
     }
 
@@ -188,12 +203,13 @@ const FirestoreAutocomplete = ({
       // Always keep current value visible even if it's not in results
       const final = value && !seen.has(value.id) ? [value, ...results] : results;
       setOptions(final);
+      onOptionsChange?.(final);
     } catch (err) {
       console.error('[FirestoreAutocomplete] search error:', err);
     } finally {
       if (queryId === activeQueryRef.current) setLoading(false);
     }
-  }, [db, collectionName, searchField, phoneField, noPhoneSearch, minChars, maxResults, value, extraConstraints]);
+  }, [db, collectionName, searchField, phoneField, noPhoneSearch, minChars, maxResults, value, extraConstraints, onOptionsChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Debounce input changes ─────────────────────────────────────────────────
   const handleInputChange = useCallback((_, newInput, reason) => {

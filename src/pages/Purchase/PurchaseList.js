@@ -4,15 +4,20 @@
 // No month selected  →  server-side cursor pagination, search disabled.
 // Month selected     →  fetch all purchases in that month (by createdAt),
 //                        filter by supplierName / invoiceNumber in memory.
+//
+// FIX: products for the purchase form dialog are no longer bulk-fetched at
+//      all. Same on-demand search pattern as CreateSale — FirestoreAutocomplete
+//      queries Firestore only as the user types a product name (≤15 results
+//      per keystroke), instead of loading the entire products collection on
+//      every page visit.
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Typography, Button, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination, Chip,
   IconButton, Stack, TextField, InputAdornment, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions, Grid, Alert,
-  Divider, MenuItem, Select, FormControl, InputLabel,
-  useTheme, useMediaQuery,
+  Divider, useTheme, useMediaQuery,
 } from '@mui/material';
 import { Add, Edit, Delete, Close, Save } from '@mui/icons-material';
 import {
@@ -27,6 +32,8 @@ import {
   applyNewPurchaseInventory, applyInventoryDeltas, reversePurchaseInventory,
 } from '../../utils/inventoryUtils';
 import MonthSearchBar from '../../components/MonthSearchBar';
+// FIX: on-demand product search — same component CreateSale uses.
+import FirestoreAutocomplete from '../../components/FirestoreAutocomplete';
 
 const PAGE_SIZE = 10;
 
@@ -40,30 +47,55 @@ const getMonthBounds = (yearMonth) => {
 };
 
 // ─── Purchase Form Dialog ─────────────────────────────────────────────────────
+// FIX: each item's productObj holds the full product doc (UI-only — stripped
+// before saving) so FirestoreAutocomplete can display the selected product's
+// name without needing the full products list loaded.
 const EMPTY_PURCHASE = {
   supplierName: '', supplierGst: '', invoiceNumber: '', invoiceDate: '',
-  items: [{ productId: '', productName: '', qty: 1, price: 0, gstRate: 18 }],
+  items: [{ productId: '', productName: '', qty: 1, price: 0, gstRate: 18, productObj: null }],
 };
 
-const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
+const PurchaseFormDialog = ({ open, onClose, onSave, initial, db }) => {
   const [form, setForm] = useState(EMPTY_PURCHASE);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { setForm(initial ? { ...EMPTY_PURCHASE, ...initial } : EMPTY_PURCHASE); setError(''); }, [initial, open]);
+
+  useEffect(() => {
+    if (initial) {
+      // FIX: reconstruct productObj from saved item fields so
+      // FirestoreAutocomplete shows the correct product name when editing
+      // an existing purchase, without fetching the full products collection.
+      const items = (initial.items || []).map(it => ({
+        ...it,
+        productObj: it.productId
+          ? { id: it.productId, name: it.productName, price: it.price, gstRate: it.gstRate }
+          : null,
+      }));
+      setForm({ ...EMPTY_PURCHASE, ...initial, items: items.length ? items : EMPTY_PURCHASE.items });
+    } else {
+      setForm(EMPTY_PURCHASE);
+    }
+    setError('');
+  }, [initial, open]);
 
   const setField = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  // FIX: supports two call signatures, same pattern as CreateSale's setItemField:
+  //   setItem(idx, 'qty')(newQty)       — single field (existing behavior)
+  //   setItem(idx)({ productId, ... })  — multi-field (used by FirestoreAutocomplete onChange)
   const setItem = (idx, k) => (val) => {
     setForm(p => {
       const items = [...p.items];
-      items[idx] = { ...items[idx], [k]: val };
-      if (k === 'productId') {
-        const prod = products.find(pr => pr.id === val);
-        if (prod) { items[idx].productName = prod.name; items[idx].price = prod.price; items[idx].gstRate = prod.gstRate; }
+      if (k === undefined) {
+        items[idx] = { ...items[idx], ...val };
+        return { ...p, items };
       }
+      items[idx] = { ...items[idx], [k]: val };
       return { ...p, items };
     });
   };
-  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { productId: '', productName: '', qty: 1, price: 0, gstRate: 18 }] }));
+
+  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { productId: '', productName: '', qty: 1, price: 0, gstRate: 18, productObj: null }] }));
   const removeItem = idx => setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
   const grandTotal = form.items.reduce((sum, it) => sum + (parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0), 0);
 
@@ -72,7 +104,14 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
       setError('Please fill all required fields'); return;
     }
     setSaving(true);
-    try { await onSave({ ...form, grandTotal }); onClose(); }
+    try {
+      // FIX: strip the UI-only productObj field before saving to Firestore —
+      // same pattern as CreateSale's buildSaleData, so the saved purchase doc
+      // only contains the real fields (productId, productName, qty, price, gstRate).
+      const cleanItems = form.items.map(({ productObj, ...rest }) => rest);
+      await onSave({ ...form, items: cleanItems, grandTotal });
+      onClose();
+    }
     catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
@@ -97,12 +136,40 @@ const PurchaseFormDialog = ({ open, onClose, onSave, initial, products }) => {
         </Box>
         {form.items.map((item, idx) => (
           <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Product</InputLabel>
-              <Select value={item.productId} onChange={e => setItem(idx, 'productId')(e.target.value)} label="Product">
-                {products.map(p => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
-              </Select>
-            </FormControl>
+            {/* FIX: replaced <Select> populated from a bulk-loaded products[]
+                array with on-demand FirestoreAutocomplete — same component
+                and pattern used in CreateSale's item rows. */}
+            <Box sx={{ minWidth: 200, flex: '1 1 200px' }}>
+              <FirestoreAutocomplete
+                db={db}
+                collectionName="products"
+                noPhoneSearch
+                size="small"
+                value={item.productObj || null}
+                onChange={(_, v) => {
+                  setItem(idx)({
+                    productId:   v?.id    || '',
+                    productName: v?.name  || '',
+                    price:       v?.price ?? 0,
+                    gstRate:     v?.gstRate ?? 18,
+                    productObj:  v || null,
+                  });
+                }}
+                label="Product"
+                getOptionLabel={p => p.name || ''}
+                isOptionEqualToValue={(a, b) => a.id === b.id}
+                renderOption={(props, p) => (
+                  <Box component="li" {...props} key={p.id}>
+                    <Box>
+                      <Typography variant="body2">{p.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ₹{p.price}{p.maker ? ` · ${p.maker}` : ''}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
+              />
+            </Box>
             <TextField size="small" label="Qty" type="number" value={item.qty} onChange={e => setItem(idx, 'qty')(e.target.value)} sx={{ width: 70 }} />
             <TextField size="small" label="Price" type="number" value={item.price} onChange={e => setItem(idx, 'price')(e.target.value)} sx={{ width: 100 }} />
             <TextField size="small" label="GST %" type="number" value={item.gstRate} onChange={e => setItem(idx, 'gstRate')(e.target.value)} sx={{ width: 70 }} />
@@ -144,14 +211,6 @@ const PurchaseList = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing,    setEditing]    = useState(null);
   const [deleteId,   setDeleteId]   = useState(null);
-  const [products,   setProducts]   = useState([]);
-
-  useEffect(() => {
-    if (!db) return;
-    getDocs(query(collection(db, 'products'), orderBy('name')))
-      .then(s => setProducts(s.docs.map(d => ({ id: d.id, ...d.data() }))))
-      .catch(() => {});
-  }, [db]);
 
   const handleSearch = val => {
     setSearch(val);
@@ -339,7 +398,7 @@ const PurchaseList = () => {
 
       <PurchaseFormDialog
         open={dialogOpen} onClose={() => { setDialogOpen(false); setEditing(null); }}
-        onSave={handleSave} initial={editing} products={products}
+        onSave={handleSave} initial={editing} db={db}
       />
       <Dialog open={Boolean(deleteId)} onClose={() => setDeleteId(null)} maxWidth="xs">
         <DialogTitle>Delete Purchase?</DialogTitle>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, TextField,
   MenuItem, Select, FormControl, InputLabel, Divider, Chip,
@@ -29,6 +29,8 @@ import {
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
 import { normalizeCustomer } from '../../utils/normalizeDoc';
+import { getOrFetch } from '../../utils/lookupCache';
+import { getInventoryForProducts, invalidateInventoryCache } from '../../utils/inventoryCache';
 import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
 // FIX: productObj added so FirestoreAutocomplete can show the selected product in edit mode
@@ -174,6 +176,9 @@ const CreateSale = () => {
   // customers/products kept for commented-out Autocomplete references below
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  // FIX: inventory is no longer bulk-loaded. It's populated incrementally —
+  // per product, as products are searched or selected (see handleProductOptionsChange
+  // and the product FirestoreAutocomplete's onChange below).
   const [inventory, setInventory] = useState({});
   const [employees, setEmployees] = useState([]);
 
@@ -215,17 +220,20 @@ const CreateSale = () => {
     else dataLoadedRef.current = true;
   }, [db]);
 
-  // FIX: Only load employees (20 docs) and inventory — customers/products now
-  // fetched on-demand by FirestoreAutocomplete as the user types (0 reads on mount).
+  // FIX: inventory is no longer fetched here at all. Stock is fetched
+  // on-demand per product — either for whatever products show up in a
+  // search dropdown (handleProductOptionsChange below) or, in edit mode,
+  // for just the products already on the sale (loadExistingSale below).
+  // This keeps reads flat as your inventory collection grows, instead of
+  // scaling with total product count every time this form opens.
+  // Employees (~20 docs) are cached via lookupCache — first open of the
+  // session fetches from Firestore, subsequent opens within 5 min are free.
   const loadLookups = async () => {
-    const [empSnap, invSnap] = await Promise.all([
-      getDocs(query(collection(db, 'users'), orderBy('name'))),
-      getDocs(collection(db, 'inventory')),
-    ]);
-    setEmployees(empSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    const invMap = {};
-    invSnap.docs.forEach(d => { invMap[d.data().productId] = d.data().stock || 0; });
-    setInventory(invMap);
+    const empData = await getOrFetch('employees', () =>
+      getDocs(query(collection(db, 'users'), orderBy('name')))
+        .then(s => s.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    setEmployees(empData);
   };
 
   const loadExistingSale = async () => {
@@ -241,12 +249,23 @@ const CreateSale = () => {
       setSaleDate(d.saleDate || '');
       // FIX: reconstruct productObj from saved item fields so FirestoreAutocomplete
       // can display the product name in edit mode without loading all products.
-      setItems((d.items || []).map(it => ({
+      const loadedItems = (d.items || []).map(it => ({
         ...it,
         productObj: it.productId
           ? { id: it.productId, name: it.productName, price: it.price, gstRate: it.gstRate, unit: it.unit, hsnCode: it.hsnCode }
           : null,
-      })));
+      }));
+      setItems(loadedItems);
+
+      // FIX: fetch inventory ONLY for the products already on this sale
+      // (typically 1–5 items) — not the whole inventory collection.
+      const idsInSale = loadedItems.map(it => it.productId).filter(Boolean);
+      if (idsInSale.length > 0) {
+        getInventoryForProducts(db, idsInSale).then(stockMap => {
+          setInventory(prev => ({ ...prev, ...stockMap }));
+        });
+      }
+
       setNotes(d.notes || '');
       setHasExchange(d.hasExchange || false);
       setExchangeItem(d.exchangeItem || '');
@@ -280,6 +299,18 @@ const CreateSale = () => {
     setPaymentType(newType);
   };
 
+  // FIX: whenever the product search dropdown shows a fresh set of results,
+  // fetch stock ONLY for those visible products (≤15 per search) instead of
+  // ever loading the full inventory collection. Cheap and instant on repeat
+  // searches since getInventoryForProducts caches for 60 seconds.
+  const handleProductOptionsChange = useCallback((opts) => {
+    const ids = (opts || []).map(o => o.id).filter(Boolean);
+    if (ids.length === 0) return;
+    getInventoryForProducts(db, ids).then(stockMap => {
+      setInventory(prev => ({ ...prev, ...stockMap }));
+    });
+  }, [db]);
+
   // FIX: supports two call signatures:
   //   setItemField(idx, 'qty')(newQty)          — single field (existing)
   //   setItemField(idx)({ productId, ... })     — multi-field (new, used by FirestoreAutocomplete onChange)
@@ -288,14 +319,12 @@ const CreateSale = () => {
       const arr = [...prev];
 
       // Multi-field update: setItemField(idx)({ productId, productName, price, ... })
+      // FIX: stock warnings for this path are handled asynchronously in the
+      // product Autocomplete's onChange below (after the on-demand inventory
+      // fetch resolves), since `inventory` may not have this product's stock
+      // yet at the moment of selection.
       if (k === undefined) {
         arr[idx] = { ...arr[idx], ...val };
-        // Preserve stock warnings when product is selected via FirestoreAutocomplete
-        if (val.productId) {
-          const stock = inventory[val.productId] || 0;
-          if (stock <= 0) toast.warning(`⚠️ ${val.productName} is OUT OF STOCK!`);
-          else if (stock < (arr[idx].qty || 1)) toast.warning(`⚠️ Only ${stock} units of ${val.productName} in stock`);
-        }
         return arr;
       }
 
@@ -437,6 +466,9 @@ const CreateSale = () => {
     try {
       const company = COMPANIES[companyId];
       let invoiceNumber;
+      // FIX: collected once, used to invalidate inventory cache after save
+      // in both branches below, since stock for these products just changed.
+      const productIdsInSale = itemsWithCalc.map(it => it.productId).filter(Boolean);
 
       if (isEdit) {
         const existingSnap = await getDoc(doc(db, 'sales', id));
@@ -512,6 +544,11 @@ const CreateSale = () => {
           'sale'
         );
 
+        // FIX: stock for these products just changed — evict cached values
+        // (including the old items, in case quantities were reduced/removed)
+        const oldProductIds = (existingData.items || []).map(it => it.productId).filter(Boolean);
+        invalidateInventoryCache([...new Set([...productIdsInSale, ...oldProductIds])]);
+
         toast.success('Sale updated!');
       } else {
         invoiceNumber = generateInvoiceNumber(
@@ -560,6 +597,9 @@ const CreateSale = () => {
         });
 
         await applyNewSaleInventory(db, itemsWithCalc);
+
+        // FIX: stock for these products just changed — evict cached values
+        invalidateInventoryCache(productIdsInSale);
 
         toast.success('Sale recorded successfully!');
       }
@@ -748,6 +788,7 @@ const CreateSale = () => {
                       collectionName="products"
                       noPhoneSearch
                       value={item.productObj || null}
+                      onOptionsChange={handleProductOptionsChange}
                       onChange={(_, v) => {
                         // Update all product-related fields in one go
                         setItemField(idx)({
@@ -760,6 +801,20 @@ const CreateSale = () => {
                           description: v?.description || '',
                           productObj:  v || null,
                         });
+
+                        // FIX: fetch stock for the selected product on-demand.
+                        // Resolves instantly if already cached from the dropdown
+                        // search above (handleProductOptionsChange); otherwise
+                        // does a single small fetch just for this one product.
+                        if (v?.id) {
+                          const currentQty = item.qty || 1;
+                          getInventoryForProducts(db, [v.id]).then(stockMap => {
+                            setInventory(prev => ({ ...prev, ...stockMap }));
+                            const stock = stockMap[v.id] || 0;
+                            if (stock <= 0) toast.warning(`⚠️ ${v.name} is OUT OF STOCK!`);
+                            else if (stock < currentQty) toast.warning(`⚠️ Only ${stock} units of ${v.name} in stock`);
+                          });
+                        }
                       }}
                       label="Product *"
                       getOptionLabel={p => p.name || ''}
@@ -769,7 +824,7 @@ const CreateSale = () => {
                           <Box>
                             <Typography variant="body2">{p.name}</Typography>
                             <Typography variant="caption" color="text.secondary">
-                              ₹{p.price} · Stock: {inventory[p.id] || 0}
+                              ₹{p.price} · Stock: {inventory[p.id] !== undefined ? inventory[p.id] : '…'}
                               {p.maker ? ` · ${p.maker}` : ''}
                             </Typography>
                           </Box>
