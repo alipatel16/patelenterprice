@@ -140,7 +140,6 @@ const Inventory = () => {
         // Check the browser console for an auto-create URL — one click fixes it.
         console.warn('[Inventory] summary count query failed:', err.message);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, refreshKey]);
 
   // ── Effect 2: Page data (paginated) OR month-search fetch ────────────
@@ -194,7 +193,6 @@ const Inventory = () => {
     return () => { active = false; };
     // cursorMap intentionally excluded — updating it inside the effect must not
     // trigger a re-run (standard cursor pagination pattern).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, page, searchMonth, debouncedSearch, refreshKey]);
 
   // ── Derived: in-memory name filter for month mode ─────────────────────

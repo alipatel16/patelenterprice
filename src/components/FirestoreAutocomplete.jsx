@@ -133,7 +133,7 @@ const FirestoreAutocomplete = ({
     if (value && !options.find(o => o.id === value.id)) {
       setOptions(prev => [value, ...prev.filter(o => o.id !== value.id)]);
     }
-  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value]);
 
   // ── Firestore prefix search ────────────────────────────────────────────────
   const search = useCallback(async (raw) => {
@@ -209,8 +209,7 @@ const FirestoreAutocomplete = ({
     } finally {
       if (queryId === activeQueryRef.current) setLoading(false);
     }
-  }, [db, collectionName, searchField, phoneField, noPhoneSearch, minChars, maxResults, value, extraConstraints, onOptionsChange]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  }, [db, collectionName, searchField, phoneField, noPhoneSearch, minChars, maxResults, value, extraConstraints, onOptionsChange]);
   // ── Debounce input changes ─────────────────────────────────────────────────
   const handleInputChange = useCallback((_, newInput, reason) => {
     setInputValue(newInput);
