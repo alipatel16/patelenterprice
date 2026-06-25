@@ -29,6 +29,7 @@ import GiftInvoiceDetail from './pages/Gifts/GiftInvoiceDetail';
 import GiftSetList from './pages/Gifts/GiftSetList';
 import GiftSetForm from './pages/Gifts/GiftSetForm';
 import ProductMovementReport from './pages/Sales/ProductMovementReport';
+import EmiList from './pages/Sales/EmiList';
 
 // Complaints
 import ComplaintList from './pages/Complaints/ComplaintList';
@@ -48,7 +49,10 @@ import ChecklistAdminView from './pages/Employees/ChecklistAdminView';
 import PenaltySettings from './pages/Employees/PenaltySettings';
 import SalaryReport from './pages/Employees/SalaryReport';
 import EmployeeSalesReport from './pages/Sales/EmployeeSalesReport';
+
+// ── DATA MIGRATION ───────────────────────────────────────────────────────────
 import DataMigrationUtil from './components/DataMigrationUtil';
+import EmiPaymentStatusFix from './components/EmiPaymentStatusFix';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -90,6 +94,7 @@ const AppContent = () => {
           <Route path="emi-dues"          element={<EmiDues />} />
           <Route path="employee-sales-report" element={<EmployeeSalesReport />} />
           <Route path="product-movement" element={<ProductMovementReport />} />
+          <Route path="emi-list" element={<EmiList />} />
 
           {/* Quotations */}
           <Route path="quotations"          element={<QuotationsList />} />
@@ -129,6 +134,7 @@ const AppContent = () => {
 
           {/* Migration Route */}
           <Route path="admin/migrate" element={<DataMigrationUtil />} />
+          <Route path="admin/emi-fix" element={<EmiPaymentStatusFix />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

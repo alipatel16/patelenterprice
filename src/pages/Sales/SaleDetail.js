@@ -556,12 +556,41 @@ const SaleDetail = () => {
       }],
     };
 
+    // try {
+    //   await updateDoc(doc(db, 'sales', id), {
+    //     emiInstallments: updatedInstallments,
+    //     updatedAt: serverTimestamp(),
+    //   });
+    //   toast.success(`Payment of ${formatCurrency(amount)} recorded`);
+    //   await loadSale();
+    // } catch (e) {
+    //   toast.error('Failed: ' + e.message);
+    // }
+
+    const downPaymentAmt   = sale.downPayment || 0;
+    const instTotalPaid    = updatedInstallments.reduce((s, i) => s + (i.paidAmount || 0), 0);
+    const newTotalPaidAmt  = instTotalPaid + downPaymentAmt;
+ 
+    const allInstPaid = updatedInstallments.length > 0 &&
+      updatedInstallments.every(i => (i.paidAmount || 0) >= i.amount);
+    const anyInstPaid = instTotalPaid > 0 || downPaymentAmt > 0;
+ 
+    const newPaymentStatus = allInstPaid ? 'paid'
+      : anyInstPaid        ? 'partial'
+      :                      'unpaid';
+ 
     try {
       await updateDoc(doc(db, 'sales', id), {
-        emiInstallments: updatedInstallments,
-        updatedAt: serverTimestamp(),
+        emiInstallments:  updatedInstallments,
+        paymentStatus:    newPaymentStatus,    // ← was missing — now always in sync
+        totalPaidAmount:  newTotalPaidAmt,     // ← keeps totalPaidAmount accurate too
+        updatedAt:        serverTimestamp(),
       });
-      toast.success(`Payment of ${formatCurrency(amount)} recorded`);
+      toast.success(
+        allInstPaid
+          ? `Final payment recorded — EMI fully paid! 🎉`
+          : `Payment of ${formatCurrency(amount)} recorded`
+      );
       await loadSale();
     } catch (e) {
       toast.error('Failed: ' + e.message);

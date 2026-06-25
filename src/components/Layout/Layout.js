@@ -43,7 +43,7 @@ const NAV_GROUPS = [
       { path: '/exchange-tracking',  label: 'Exchange',          icon: <SwapHoriz />,      adminOnly: false },
       { path: '/emi-dues',           label: 'EMI Dues',          icon: <CreditScore />,    adminOnly: false },
       { path: '/quotations',         label: 'Quotations',        icon: <Description />,    adminOnly: false },
-      { path: '/employee-sales-report', label: 'Employee Sales Report', icon: <BarChart />, adminOnly: true },
+      // { path: '/employee-sales-report', label: 'Employee Sales Report', icon: <BarChart />, adminOnly: true },
     ],
   },
   {

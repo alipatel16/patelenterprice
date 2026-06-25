@@ -10,6 +10,7 @@ import {
 import {
   Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule,
   DateRange, Clear, ShowChart,
+  CreditScore,
 } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
@@ -48,7 +49,7 @@ const isSearchableRange = (from, to) => {
 };
 
 const SalesList = () => {
-  const { db } = useAuth();
+  const { db, isAdmin } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
@@ -244,14 +245,25 @@ const SalesList = () => {
           >
             {isMobile ? '' : 'Filters'}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
           </Button>
-          <Button
+          {isAdmin && (
+            <Button
+              variant="outlined"
+              color="warning"
+              startIcon={<CreditScore />}
+              onClick={() => navigate('/emi-list')}
+              size={isMobile ? 'small' : 'medium'}
+            >
+              {isMobile ? 'EMI' : 'EMI Pending'}
+            </Button>
+          )}
+          {/* <Button
             variant="outlined"
             startIcon={<ShowChart />}
             onClick={() => navigate('/product-movement')}
             size={isMobile ? 'small' : 'medium'}
           >
             {isMobile ? 'Reports' : 'Movement Reports'}
-          </Button>
+          </Button> */}
           <Button
             variant="contained"
             startIcon={<Add />}
