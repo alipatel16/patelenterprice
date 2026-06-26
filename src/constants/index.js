@@ -52,7 +52,7 @@ export const COMPANIES = {
     city: "Viramgam",
     state: "Gujarat",
     pincode: "382150",
-    phone: "+91-7600946872",
+    phone: "+91-9213646792",
     email: "info@patelelectronicsandfurniture.com",
     gstNumber: "24CAIPP6969F1Z8",
     website: "https://patelelectronicsandfurniture.com/",
