@@ -46,11 +46,14 @@ const PAYMENT_MODES = ['Cash', 'UPI', 'Cheque', 'NEFT / RTGS', 'Other'];
 
 // ─── Print Invoice ────────────────────────────────────────────────────────────
 
-const generateInvoiceHTML = (sale, installments, company) => {
+const generateInvoiceHTML = (sale, installments, company, customer) => {
   const items = sale.items || [];
   const salePayments = sale.salePayments || [];
   const isGST = sale.invoiceType === 'gst';
   const isEMI = sale.paymentType === PAYMENT_TYPES.EMI;
+
+  // Build customer address from customers collection data
+  const customerAddr = [customer?.address, customer?.city, customer?.state].filter(Boolean).join(', ');
 
   const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(n || 0);
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -144,12 +147,12 @@ const generateInvoiceHTML = (sale, installments, company) => {
     <div class="meta">
       <div class="num">${sale.invoiceNumber}</div>
       <div class="dt">Date: ${fmtD(sale.saleDate)}</div>
-      <div><span class="badge">${isGST ? 'GST Invoice' : 'Non-GST Invoice'}</span></div>
+      ${isGST ? '<div><span class="badge">GST Invoice</span></div>' : ''}
       <div style="margin-top:8px">${payStatusHtml()}</div>
     </div>
   </div>
   <div class="parties">
-    <div class="pbox"><div class="lbl">Bill To</div><h3>${sale.customerName}</h3><p>${sale.customerPhone}</p></div>
+    <div class="pbox"><div class="lbl">Bill To</div><h3>${sale.customerName}</h3><p>${sale.customerPhone || ''}</p>${customerAddr ? `<p style="font-size:12px;color:#6b7280;margin-top:2px">${customerAddr}</p>` : ''}</div>
     <div class="pbox"><div class="lbl">Salesperson</div><h3>${sale.salesperson || '—'}</h3>${sale.notes ? `<p>Note: ${sale.notes}</p>` : ''}</div>
   </div>
   <div class="sec">
@@ -218,10 +221,10 @@ const generateInvoiceHTML = (sale, installments, company) => {
 </div></body></html>`;
 };
 
-const printInvoice = (sale, installments, company) => {
+const printInvoice = (sale, installments, company, customer) => {
   const win = window.open('', '_blank', 'width=900,height=700');
   if (!win) { toast.error('Popup blocked. Please allow popups.'); return; }
-  win.document.write(generateInvoiceHTML(sale, installments, company));
+  win.document.write(generateInvoiceHTML(sale, installments, company, customer));
   win.document.close();
 };
 
@@ -488,6 +491,7 @@ const SaleDetail = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [sale, setSale] = useState(null);
+  const [customer, setCustomer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(0);
   const [payDialog, setPayDialog] = useState(null);
@@ -525,6 +529,16 @@ const SaleDetail = () => {
       }
 
       setSale(saleData);
+
+      // Fetch customer address from customers collection for print invoice
+      if (saleData.customerId) {
+        try {
+          const custSnap = await getDoc(doc(db, 'customers', saleData.customerId));
+          if (custSnap.exists()) setCustomer({ id: custSnap.id, ...custSnap.data() });
+        } catch {
+          // Non-critical — address just won't appear on the print if fetch fails
+        }
+      }
     } catch (e) {
       toast.error('Failed to load sale: ' + e.message);
     } finally {
@@ -684,7 +698,7 @@ const SaleDetail = () => {
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Button variant="outlined" startIcon={<Print />}
-            onClick={() => printInvoice(sale, installments, company)}
+            onClick={() => printInvoice(sale, installments, company, customer)}
             size={isMobile ? 'small' : 'medium'}>
             {isMobile ? 'Invoice' : 'Print Invoice'}
           </Button>

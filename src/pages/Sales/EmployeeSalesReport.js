@@ -1,15 +1,16 @@
 // src/pages/Sales/EmployeeSalesReport.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Card, CardContent, Grid, Chip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TextField, MenuItem, Button, Stack, Alert, Divider, Avatar,
-  ToggleButton, ToggleButtonGroup, LinearProgress, IconButton, Tooltip,
-  Collapse,
+  TextField, MenuItem, Button, Stack, Alert, Avatar, LinearProgress,
+  IconButton, Collapse, Divider,
+  ToggleButton, ToggleButtonGroup, useTheme, useMediaQuery,
 } from '@mui/material';
 import {
-  BarChart as BarChartIcon, TrendingUp, Person, CalendarMonth,
-  Refresh, ExpandMore, ExpandLess, Today, DateRange,
+  TrendingUp, Person, CalendarMonth, Refresh,
+  ExpandMore, ExpandLess, Today, DateRange, EmojiEvents,
+  ReceiptLong, AttachMoney, Groups,
 } from '@mui/icons-material';
 import {
   collection, query, where, getDocs, orderBy,
@@ -19,7 +20,6 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate } from '../../utils';
 import { PAYMENT_LABELS } from '../../constants';
-import { useMediaQuery, useTheme } from '@mui/material';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,116 +40,251 @@ const MONTHS = [
 const initials = (name = '') =>
   name.split(' ').slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('');
 
-// ─── Summary Card ─────────────────────────────────────────────────────────────
-const SummaryCard = ({ label, value, sub, color = 'primary', icon }) => (
-  <Card sx={{ height: '100%' }}>
-    <CardContent>
-      <Box display="flex" alignItems="flex-start" justifyContent="space-between">
-        <Box>
-          <Typography variant="caption" color="text.secondary" fontWeight={600} textTransform="uppercase">
-            {label}
-          </Typography>
-          <Typography variant="h5" fontWeight={800} color={`${color}.main`} mt={0.5}>
-            {value}
-          </Typography>
-          {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
-        </Box>
-        <Box sx={{ p: 1, borderRadius: 2, bgcolor: `${color}.50`, color: `${color}.main` }}>
-          {icon}
-        </Box>
-      </Box>
-    </CardContent>
-  </Card>
+// ─── Rank config ──────────────────────────────────────────────────────────────
+const RANK_CONFIG = [
+  { emoji: '🥇', bg: '#fef3c7', border: '#f59e0b', avatarBg: '#f59e0b' },
+  { emoji: '🥈', bg: '#f3f4f6', border: '#9ca3af', avatarBg: '#6b7280' },
+  { emoji: '🥉', bg: '#fef9f0', border: '#d97706', avatarBg: '#b45309' },
+];
+
+// ─── Stat chip ────────────────────────────────────────────────────────────────
+const StatChip = ({ icon, label, value, color }) => (
+  <Box sx={{
+    display: 'flex', alignItems: 'center', gap: 1.5,
+    px: 2, py: 1.5, borderRadius: 2,
+    border: '1px solid', borderColor: `${color}.light`,
+    bgcolor: `${color}.50`, flex: 1, minWidth: 130,
+  }}>
+    <Box sx={{
+      width: 36, height: 36, borderRadius: '50%',
+      bgcolor: `${color}.main`, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    }}>
+      {React.cloneElement(icon, { sx: { fontSize: 18, color: '#fff' } })}
+    </Box>
+    <Box sx={{ minWidth: 0 }}>
+      <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" noWrap>
+        {label}
+      </Typography>
+      <Typography variant="body1" fontWeight={800} color={`${color}.main`} noWrap>
+        {value}
+      </Typography>
+    </Box>
+  </Box>
 );
 
-// ─── Employee Row ─────────────────────────────────────────────────────────────
-const EmployeeRow = ({ emp, rank, isMobile }) => {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetails = (emp.sales || []).length > 0;
+// ─── Mobile Employee Card ─────────────────────────────────────────────────────
+const EmployeeMobileCard = ({ emp, rank, totalRevenue }) => {
+  const [open, setOpen] = useState(false);
+  const cfg = RANK_CONFIG[rank - 1];
+  const pct = totalRevenue > 0 ? Math.round((emp.totalAmount / totalRevenue) * 100) : 0;
+  const hasSales = emp.sales.length > 0;
+
+  return (
+    <Card elevation={0} sx={{
+      mb: 1.5,
+      border: '1.5px solid',
+      borderColor: cfg ? cfg.border : 'divider',
+      bgcolor: cfg ? cfg.bg : 'background.paper',
+      borderRadius: 2,
+    }}>
+      <CardContent sx={{ pb: '12px !important', pt: 1.5, px: 2 }}>
+        {/* Top row: rank + name + revenue */}
+        <Box display="flex" alignItems="center" gap={1.5}>
+          <Avatar sx={{
+            width: 38, height: 38, fontSize: 14, fontWeight: 700, flexShrink: 0,
+            bgcolor: cfg ? cfg.avatarBg : 'primary.main',
+          }}>
+            {cfg ? cfg.emoji : initials(emp.name)}
+          </Avatar>
+          <Box flex={1} minWidth={0}>
+            <Typography variant="body2" fontWeight={700} noWrap>{emp.name}</Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              {emp.invoiceCount} invoice{emp.invoiceCount !== 1 ? 's' : ''}
+              {emp.invoiceCount > 0 && ` · avg ${formatCurrency(emp.totalAmount / emp.invoiceCount)}`}
+            </Typography>
+          </Box>
+          <Box textAlign="right" flexShrink={0}>
+            <Typography variant="subtitle2" fontWeight={800} color="success.main">
+              {formatCurrency(emp.totalAmount)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">{pct}% of total</Typography>
+          </Box>
+        </Box>
+
+        {/* Progress bar */}
+        {totalRevenue > 0 && (
+          <LinearProgress
+            variant="determinate"
+            value={pct}
+            sx={{ mt: 1.5, height: 5, borderRadius: 3,
+              bgcolor: cfg ? 'rgba(0,0,0,0.08)' : 'grey.200',
+              '& .MuiLinearProgress-bar': {
+                bgcolor: cfg ? cfg.avatarBg : 'primary.main',
+                borderRadius: 3,
+              }
+            }}
+          />
+        )}
+
+        {/* Expand button */}
+        {hasSales && (
+          <Box mt={1} display="flex" justifyContent="flex-end">
+            <Button
+              size="small"
+              variant="text"
+              endIcon={open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+              onClick={() => setOpen(o => !o)}
+              sx={{ fontSize: 11, color: 'text.secondary', minWidth: 0, p: '2px 6px' }}
+            >
+              {open ? 'Hide' : 'View'} sales
+            </Button>
+          </Box>
+        )}
+
+        {/* Expanded sales */}
+        <Collapse in={open} unmountOnExit>
+          <Divider sx={{ my: 1 }} />
+          <Stack spacing={0.75}>
+            {emp.sales.map(s => (
+              <Box key={s.id} sx={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                py: 0.75, px: 1, bgcolor: 'background.paper', borderRadius: 1,
+                border: '1px solid', borderColor: 'divider',
+              }}>
+                <Box minWidth={0}>
+                  <Typography variant="caption" fontWeight={700} color="primary" display="block" noWrap>
+                    {s.invoiceNumber}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap>
+                    {s.customerName} · {formatDate(s.saleDate)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" fontWeight={700} color="success.main" flexShrink={0} ml={1}>
+                  {formatCurrency(s.grandTotal)}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Collapse>
+      </CardContent>
+    </Card>
+  );
+};
+
+// ─── Desktop Employee Row ─────────────────────────────────────────────────────
+const EmployeeDesktopRow = ({ emp, rank, totalRevenue }) => {
+  const [open, setOpen] = useState(false);
+  const cfg = RANK_CONFIG[rank - 1];
+  const pct = totalRevenue > 0 ? Math.round((emp.totalAmount / totalRevenue) * 100) : 0;
+  const hasSales = emp.sales.length > 0;
 
   return (
     <>
       <TableRow
         hover
         sx={{
-          bgcolor: rank === 1 ? 'warning.50' : rank === 2 ? 'grey.50' : 'inherit',
-          cursor: hasDetails ? 'pointer' : 'default',
+          bgcolor: cfg ? `${cfg.bg}` : 'inherit',
+          cursor: hasSales ? 'pointer' : 'default',
+          '& td': { borderBottom: '1px solid', borderColor: 'divider' },
         }}
-        onClick={() => hasDetails && setExpanded(e => !e)}
+        onClick={() => hasSales && setOpen(o => !o)}
       >
+        {/* Rank + Name */}
         <TableCell>
           <Box display="flex" alignItems="center" gap={1.5}>
-            <Avatar
-              sx={{
-                width: 32, height: 32, fontSize: 13, fontWeight: 700,
-                bgcolor: rank === 1 ? 'warning.main' : rank === 2 ? 'grey.500' : rank === 3 ? 'warning.700' : 'primary.main',
-              }}
-            >
-              {rank <= 3 ? ['🥇','🥈','🥉'][rank - 1] : initials(emp.name)}
+            <Avatar sx={{
+              width: 36, height: 36, fontSize: 14, fontWeight: 700,
+              bgcolor: cfg ? cfg.avatarBg : 'primary.main',
+            }}>
+              {cfg ? cfg.emoji : initials(emp.name)}
             </Avatar>
             <Box>
-              <Typography variant="body2" fontWeight={600}>{emp.name}</Typography>
-              {!isMobile && emp.email && (
+              <Typography variant="body2" fontWeight={700}>{emp.name}</Typography>
+              {emp.email && (
                 <Typography variant="caption" color="text.secondary">{emp.email}</Typography>
               )}
             </Box>
           </Box>
         </TableCell>
-        <TableCell align="center">
-          <Chip label={emp.invoiceCount} color="primary" size="small" />
-        </TableCell>
-        <TableCell align="right">
-          <Typography fontWeight={700} color="success.main">{formatCurrency(emp.totalAmount)}</Typography>
-        </TableCell>
-        {!isMobile && (
-          <TableCell align="right">
-            <Typography variant="body2" color="text.secondary">
-              {emp.invoiceCount > 0 ? formatCurrency(emp.totalAmount / emp.invoiceCount) : '—'}
-            </Typography>
-          </TableCell>
-        )}
-        {!isMobile && (
-          <TableCell align="center">
-            <Chip
-              label={emp.topPaymentType ? (PAYMENT_LABELS[emp.topPaymentType] || emp.topPaymentType) : '—'}
-              size="small"
-              variant="outlined"
+
+        {/* Revenue bar */}
+        <TableCell sx={{ width: 180 }}>
+          <Box>
+            <Box display="flex" justifyContent="space-between" mb={0.5}>
+              <Typography variant="body2" fontWeight={700} color="success.main">
+                {formatCurrency(emp.totalAmount)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">{pct}%</Typography>
+            </Box>
+            <LinearProgress
+              variant="determinate"
+              value={pct}
+              sx={{
+                height: 6, borderRadius: 3,
+                bgcolor: 'grey.200',
+                '& .MuiLinearProgress-bar': {
+                  bgcolor: cfg ? cfg.avatarBg : 'primary.main',
+                  borderRadius: 3,
+                }
+              }}
             />
-          </TableCell>
-        )}
+          </Box>
+        </TableCell>
+
+        {/* Invoices */}
         <TableCell align="center">
-          {hasDetails && (
-            <IconButton size="small" onClick={e => { e.stopPropagation(); setExpanded(x => !x); }}>
-              {expanded ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+          <Chip
+            label={emp.invoiceCount}
+            size="small"
+            color={emp.invoiceCount > 0 ? 'primary' : 'default'}
+            sx={{ fontWeight: 700, minWidth: 36 }}
+          />
+        </TableCell>
+
+        {/* Avg per sale */}
+        <TableCell align="right">
+          <Typography variant="body2" color="text.secondary">
+            {emp.invoiceCount > 0 ? formatCurrency(emp.totalAmount / emp.invoiceCount) : '—'}
+          </Typography>
+        </TableCell>
+
+        {/* Expand */}
+        <TableCell align="center" width={48}>
+          {hasSales && (
+            <IconButton size="small" onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
+              {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
             </IconButton>
           )}
         </TableCell>
       </TableRow>
 
-      {/* Expanded sale details */}
+      {/* Expanded sales */}
       <TableRow>
-        <TableCell colSpan={isMobile ? 4 : 6} sx={{ p: 0, borderBottom: expanded ? undefined : 'none' }}>
-          <Collapse in={expanded} timeout="auto" unmountOnExit>
-            <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
+        <TableCell colSpan={5} sx={{ p: 0, border: 'none' }}>
+          <Collapse in={open} timeout="auto" unmountOnExit>
+            <Box sx={{ px: 2, py: 1.5, bgcolor: 'grey.50', borderBottom: '1px solid', borderColor: 'divider' }}>
               <Typography variant="caption" fontWeight={700} color="text.secondary" display="block" mb={1}>
-                INDIVIDUAL SALES
+                INDIVIDUAL SALES — {emp.name.toUpperCase()}
               </Typography>
               <TableContainer>
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Invoice #</TableCell>
-                      <TableCell>Customer</TableCell>
-                      <TableCell>Date</TableCell>
-                      <TableCell align="right">Amount</TableCell>
-                      <TableCell>Payment Type</TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: 11 }}>Invoice #</TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: 11 }}>Customer</TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: 11 }}>Date</TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: 11 }} align="right">Amount</TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: 11 }}>Payment</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {(emp.sales || []).map(s => (
+                    {emp.sales.map(s => (
                       <TableRow key={s.id} hover>
                         <TableCell>
-                          <Typography variant="caption" fontWeight={600}>{s.invoiceNumber}</Typography>
+                          <Typography variant="caption" fontWeight={600} color="primary">
+                            {s.invoiceNumber}
+                          </Typography>
                         </TableCell>
                         <TableCell>
                           <Typography variant="caption">{s.customerName}</Typography>
@@ -183,6 +318,30 @@ const EmployeeRow = ({ emp, rank, isMobile }) => {
   );
 };
 
+// ─── Zero-sale employees section ──────────────────────────────────────────────
+const ZeroSalesBadge = ({ employees }) => {
+  if (employees.length === 0) return null;
+  return (
+    <Box sx={{ px: 2, py: 1.5, borderTop: '1px dashed', borderColor: 'divider' }}>
+      <Typography variant="caption" color="text.disabled" fontWeight={600} display="block" mb={1}>
+        NO SALES IN THIS PERIOD
+      </Typography>
+      <Box display="flex" flexWrap="wrap" gap={1}>
+        {employees.map(e => (
+          <Chip
+            key={e.id}
+            avatar={<Avatar sx={{ bgcolor: 'grey.400', fontSize: 11 }}>{initials(e.name)}</Avatar>}
+            label={e.name}
+            size="small"
+            variant="outlined"
+            sx={{ color: 'text.disabled', borderColor: 'divider' }}
+          />
+        ))}
+      </Box>
+    </Box>
+  );
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const EmployeeSalesReport = () => {
@@ -192,50 +351,57 @@ const EmployeeSalesReport = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const today = getTodayStr();
-  const currentYear = new Date().getFullYear();
+  const currentYear  = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
 
-  // ── Filter mode: 'today' | 'month' | 'custom'
-  const [mode, setMode] = useState('month');
-  const [selYear, setSelYear] = useState(currentYear);
+  // ── Filters ─────────────────────────────────────────────────────────────────
+  // Default: today (per user request)
+  const [mode,     setMode]     = useState('today');
+  const [selYear,  setSelYear]  = useState(currentYear);
   const [selMonth, setSelMonth] = useState(currentMonth);
   const [dateFrom, setDateFrom] = useState(today);
-  const [dateTo, setDateTo] = useState(today);
+  const [dateTo,   setDateTo]   = useState(today);
 
+  // ── Data ────────────────────────────────────────────────────────────────────
   const [employees, setEmployees] = useState([]);
-  const [report, setReport] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [report,    setReport]    = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [loaded,    setLoaded]    = useState(false);  // has at least one fetch completed
 
-  // ── Redirect non-admin ──
+  // Guard: prevent double-fires while employees is loading
+  const empLoadedRef = useRef(false);
+
+  // Admin guard
   useEffect(() => {
     if (!isAdmin) { toast.error('Admin access required'); navigate('/dashboard'); }
   }, [isAdmin, navigate]);
 
-  // ── Load employees ──
+  // Load employees once
   useEffect(() => {
     if (!db) return;
     getDocs(query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name')))
-      .then(snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .then(snap => {
+        setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        empLoadedRef.current = true;
+      })
       .catch(() => {});
   }, [db]);
 
-  // ── Compute date range ──
+  // ── Compute active date range ────────────────────────────────────────────────
   const getRange = useCallback(() => {
-    if (mode === 'today') return { start: today, end: today };
-    if (mode === 'month') return getMonthRange(selYear, selMonth);
+    if (mode === 'today')  return { start: today, end: today };
+    if (mode === 'month')  return getMonthRange(selYear, selMonth);
     return { start: dateFrom, end: dateTo };
   }, [mode, today, selYear, selMonth, dateFrom, dateTo]);
 
-  // ── Load sales & build report ──
+  // ── Fetch & aggregate ────────────────────────────────────────────────────────
   const loadReport = useCallback(async () => {
-    if (!db || employees.length === 0) return;
+    if (!db || !empLoadedRef.current) return;
+    const { start, end } = getRange();
+    if (start > end) { toast.error('Start date must be before end date'); return; }
+
     setLoading(true);
     try {
-      const { start, end } = getRange();
-      if (start > end) { toast.error('Start date must be before end date'); setLoading(false); return; }
-
-      // Fetch all sales in range
       const salesSnap = await getDocs(
         query(
           collection(db, 'sales'),
@@ -246,147 +412,135 @@ const EmployeeSalesReport = () => {
       );
       const allSales = salesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // Build a map: salesperson name → data
-      // Note: salesperson field in sale doc stores the name (string), not uid
-      // We also need to match against employees by name
+      // Build lookup: employee name (lowercase) → employee data
       const empMap = {};
       employees.forEach(emp => {
-        empMap[emp.name?.toLowerCase()] = {
-          id: emp.id,
-          name: emp.name,
-          email: emp.email,
-          companyId: emp.companyId,
-          invoiceCount: 0,
-          totalAmount: 0,
-          sales: [],
-          paymentTypeCounts: {},
+        empMap[(emp.name || '').toLowerCase().trim()] = {
+          id:             emp.id,
+          name:           emp.name,
+          email:          emp.email || '',
+          invoiceCount:   0,
+          totalAmount:    0,
+          sales:          [],
         };
       });
 
-      // Bucket unmatched sales under "Other / Direct"
+      // Bucket for sales with no matching employee
       const unmatched = {
-        id: '__unmatched__',
-        name: 'Other / Direct',
-        email: '',
-        invoiceCount: 0,
-        totalAmount: 0,
-        sales: [],
-        paymentTypeCounts: {},
+        id: '__other__', name: 'Other / Direct',
+        email: '', invoiceCount: 0, totalAmount: 0, sales: [],
       };
 
       allSales.forEach(sale => {
-        const spName = (sale.salesperson || '').toLowerCase().trim();
-        const target = empMap[spName] || unmatched;
-        target.invoiceCount += 1;
-        target.totalAmount += sale.grandTotal || 0;
-        target.sales.push(sale);
-        const pt = sale.paymentType || 'unknown';
-        target.paymentTypeCounts[pt] = (target.paymentTypeCounts[pt] || 0) + 1;
+        const key = (sale.salesperson || '').toLowerCase().trim();
+        const bucket = empMap[key] || unmatched;
+        bucket.invoiceCount  += 1;
+        bucket.totalAmount   += sale.grandTotal || 0;
+        bucket.sales.push(sale);
       });
 
-      // Build sorted result
-      const rows = [...Object.values(empMap), unmatched]
-        .filter(e => e.invoiceCount > 0 || e.id !== '__unmatched__')
-        .map(e => ({
-          ...e,
-          topPaymentType: Object.entries(e.paymentTypeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
-        }))
+      // Build ranked list: only employees, sorted by revenue desc
+      const rankedEmployees = Object.values(empMap)
         .sort((a, b) => b.totalAmount - a.totalAmount);
 
+      // Append unmatched only if it has sales
+      const rows = unmatched.invoiceCount > 0
+        ? [...rankedEmployees, unmatched]
+        : rankedEmployees;
+
       setReport(rows);
+      setLoaded(true);
     } catch (e) {
-      toast.error('Failed to load report: ' + e.message);
+      toast.error('Failed to load: ' + e.message);
     } finally {
       setLoading(false);
     }
   }, [db, employees, getRange]);
 
-  useEffect(() => { loadReport(); }, [loadReport, refreshKey]);
+  // Auto-load when employees ready OR filters change (except custom — wait for Apply)
+  useEffect(() => {
+    if (employees.length === 0) return;
+    if (mode !== 'custom') loadReport();
+  }, [employees, mode, selYear, selMonth]);
 
-  // ── Summary stats ──
-  const totalSales = report.reduce((s, r) => s + r.totalAmount, 0);
+  // ── Derived stats ────────────────────────────────────────────────────────────
+  const totalRevenue  = report.reduce((s, r) => s + r.totalAmount, 0);
   const totalInvoices = report.reduce((s, r) => s + r.invoiceCount, 0);
-  const topEmployee = report.find(r => r.id !== '__unmatched__' && r.invoiceCount > 0);
+  const activeEmps    = report.filter(r => r.id !== '__other__' && r.invoiceCount > 0);
+  const zeroEmps      = report.filter(r => r.id !== '__other__' && r.invoiceCount === 0);
+  const topPerformer  = activeEmps[0];
   const { start, end } = getRange();
 
-  const yearOptions = [];
-  for (let y = currentYear; y >= currentYear - 4; y--) yearOptions.push(y);
+  const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - i);
+
+  const periodLabel =
+    mode === 'today' ? `Today — ${formatDate(today)}`
+    : mode === 'month' ? `${MONTHS[selMonth - 1]} ${selYear}`
+    : `${formatDate(start)} → ${formatDate(end)}`;
 
   if (!isAdmin) return null;
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1100, mx: 'auto' }}>
-      {/* Header */}
+    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1000, mx: 'auto' }}>
+
+      {/* ── Header ── */}
       <Box display="flex" alignItems={{ xs: 'flex-start', sm: 'center' }}
         flexDirection={{ xs: 'column', sm: 'row' }}
-        justifyContent="space-between" gap={2} mb={3}>
+        justifyContent="space-between" gap={1.5} mb={3}>
         <Box>
           <Typography variant="h5" fontWeight={700} display="flex" alignItems="center" gap={1}>
-            <BarChartIcon color="primary" />
+            <EmojiEvents color="warning" />
             Employee Sales Report
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Admin view — track individual employee performance
+            {periodLabel}
           </Typography>
         </Box>
-        <Tooltip title="Refresh">
-          <IconButton onClick={() => setRefreshKey(k => k + 1)} disabled={loading}>
-            <Refresh />
-          </IconButton>
-        </Tooltip>
+        <IconButton onClick={loadReport} disabled={loading} size="small" sx={{ border: '1px solid', borderColor: 'divider' }}>
+          {loading ? <CircularProgress size={18} /> : <Refresh fontSize="small" />}
+        </IconButton>
       </Box>
 
-      {/* Filter Panel */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Stack spacing={2}>
+      {/* ── Filter controls ── */}
+      <Card elevation={0} sx={{ mb: 2.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+        <CardContent sx={{ pb: '14px !important', pt: 1.5, px: 2 }}>
+          <Stack spacing={1.5}>
             {/* Mode toggle */}
-            <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-              <Typography variant="body2" fontWeight={600} color="text.secondary">
-                Date Range:
-              </Typography>
-              <ToggleButtonGroup
-                value={mode}
-                exclusive
-                onChange={(_, v) => v && setMode(v)}
-                size="small"
-              >
-                <ToggleButton value="today">
-                  <Today fontSize="small" sx={{ mr: 0.5 }} />
-                  Today
-                </ToggleButton>
-                <ToggleButton value="month">
-                  <CalendarMonth fontSize="small" sx={{ mr: 0.5 }} />
-                  Month
-                </ToggleButton>
-                <ToggleButton value="custom">
-                  <DateRange fontSize="small" sx={{ mr: 0.5 }} />
-                  Custom
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
+            <ToggleButtonGroup
+              value={mode} exclusive
+              onChange={(_, v) => v && setMode(v)}
+              size="small"
+              fullWidth={isMobile}
+            >
+              <ToggleButton value="today" sx={{ gap: 0.5, fontSize: 13 }}>
+                <Today fontSize="small" />
+                Today
+              </ToggleButton>
+              <ToggleButton value="month" sx={{ gap: 0.5, fontSize: 13 }}>
+                <CalendarMonth fontSize="small" />
+                This Month
+              </ToggleButton>
+              <ToggleButton value="custom" sx={{ gap: 0.5, fontSize: 13 }}>
+                <DateRange fontSize="small" />
+                Custom
+              </ToggleButton>
+            </ToggleButtonGroup>
 
-            {/* Month/Year selectors */}
+            {/* Month + Year pickers */}
             {mode === 'month' && (
-              <Grid container spacing={2}>
-                <Grid item xs={6} sm={4} md={3}>
-                  <TextField
-                    fullWidth size="small" select label="Month" value={selMonth}
-                    onChange={e => setSelMonth(Number(e.target.value))}
-                  >
+              <Grid container spacing={1.5}>
+                <Grid item xs={6} sm={4}>
+                  <TextField fullWidth size="small" select label="Month" value={selMonth}
+                    onChange={e => setSelMonth(Number(e.target.value))}>
                     {MONTHS.map((m, i) => (
                       <MenuItem key={i + 1} value={i + 1}>{m}</MenuItem>
                     ))}
                   </TextField>
                 </Grid>
-                <Grid item xs={6} sm={4} md={3}>
-                  <TextField
-                    fullWidth size="small" select label="Year" value={selYear}
-                    onChange={e => setSelYear(Number(e.target.value))}
-                  >
-                    {yearOptions.map(y => (
-                      <MenuItem key={y} value={y}>{y}</MenuItem>
-                    ))}
+                <Grid item xs={6} sm={3}>
+                  <TextField fullWidth size="small" select label="Year" value={selYear}
+                    onChange={e => setSelYear(Number(e.target.value))}>
+                    {yearOptions.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                   </TextField>
                 </Grid>
               </Grid>
@@ -394,204 +548,194 @@ const EmployeeSalesReport = () => {
 
             {/* Custom date range */}
             {mode === 'custom' && (
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={5} md={4}>
-                  <TextField
-                    fullWidth size="small" type="date" label="From"
+              <Grid container spacing={1.5} alignItems="center">
+                <Grid item xs={12} sm={4}>
+                  <TextField fullWidth size="small" type="date" label="From"
                     value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                  />
+                    InputLabelProps={{ shrink: true }} />
                 </Grid>
-                <Grid item xs={12} sm={5} md={4}>
-                  <TextField
-                    fullWidth size="small" type="date" label="To"
+                <Grid item xs={12} sm={4}>
+                  <TextField fullWidth size="small" type="date" label="To"
                     value={dateTo} onChange={e => setDateTo(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: dateFrom }}
-                  />
+                    InputLabelProps={{ shrink: true }} inputProps={{ min: dateFrom }} />
                 </Grid>
-                <Grid item xs={12} sm={2} md={2}>
-                  <Button fullWidth variant="contained" onClick={() => setRefreshKey(k => k + 1)}>
-                    Apply
+                <Grid item xs={12} sm={4}>
+                  <Button fullWidth variant="contained" onClick={loadReport} disabled={loading}>
+                    {loading ? 'Loading…' : 'Apply'}
                   </Button>
                 </Grid>
               </Grid>
             )}
-
-            {/* Active range display */}
-            <Box sx={{ p: 1.5, bgcolor: 'primary.50', borderRadius: 2, display: 'inline-flex', alignItems: 'center', gap: 1 }}>
-              <CalendarMonth sx={{ fontSize: 16, color: 'primary.main' }} />
-              <Typography variant="caption" color="primary.main" fontWeight={600}>
-                {mode === 'today'
-                  ? `Today — ${formatDate(today)}`
-                  : mode === 'month'
-                  ? `${MONTHS[selMonth - 1]} ${selYear}`
-                  : `${formatDate(start)} → ${formatDate(end)}`}
-              </Typography>
-            </Box>
           </Stack>
         </CardContent>
       </Card>
 
-      {/* Summary Cards */}
-      <Grid container spacing={2} mb={3}>
-        <Grid item xs={6} sm={3}>
-          <SummaryCard
+      {/* ── Summary stats ── */}
+      {loaded && !loading && (
+        <Box
+          sx={{
+            display: 'flex', gap: 1.5, mb: 2.5,
+            overflowX: 'auto', pb: 0.5,
+            // hide scrollbar on mobile
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
+        >
+          <StatChip
+            icon={<AttachMoney />}
             label="Total Revenue"
-            value={formatCurrency(totalSales)}
-            sub={`${totalInvoices} invoices`}
+            value={formatCurrency(totalRevenue)}
             color="success"
-            icon={<TrendingUp />}
           />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <SummaryCard
-            label="Total Invoices"
+          <StatChip
+            icon={<ReceiptLong />}
+            label="Invoices"
             value={totalInvoices}
-            sub="across all employees"
             color="primary"
-            icon={<BarChartIcon />}
           />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <SummaryCard
+          <StatChip
+            icon={<EmojiEvents />}
             label="Top Performer"
-            value={topEmployee?.name?.split(' ')[0] || '—'}
-            sub={topEmployee ? formatCurrency(topEmployee.totalAmount) : ''}
+            value={topPerformer?.name?.split(' ')[0] || '—'}
             color="warning"
-            icon={<Person />}
           />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <SummaryCard
-            label="Active Employees"
-            value={report.filter(r => r.id !== '__unmatched__' && r.invoiceCount > 0).length}
-            sub={`of ${employees.length} total`}
+          <StatChip
+            icon={<Groups />}
+            label="Active"
+            value={`${activeEmps.length}/${employees.length}`}
             color="info"
-            icon={<Person />}
           />
-        </Grid>
-      </Grid>
+        </Box>
+      )}
 
-      {/* Report Table */}
-      <Card>
-        {loading ? (
-          <Box>
-            <LinearProgress />
-            <Box display="flex" justifyContent="center" py={6}>
-              <CircularProgress />
-            </Box>
+      {/* ── Loading ── */}
+      {loading && (
+        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <LinearProgress />
+          <Box display="flex" justifyContent="center" py={6}>
+            <CircularProgress />
           </Box>
-        ) : report.length === 0 ? (
-          <Box textAlign="center" py={6}>
-            <BarChartIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-            <Typography color="text.secondary">No sales found for the selected period</Typography>
-            <Typography variant="caption" color="text.secondary">
-              Try changing the date range or check if sales have been recorded
+        </Card>
+      )}
+
+      {/* ── Empty state ── */}
+      {loaded && !loading && totalInvoices === 0 && (
+        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <Box textAlign="center" py={6} px={2}>
+            <EmojiEvents sx={{ fontSize: 52, color: 'text.disabled', mb: 1.5 }} />
+            <Typography variant="h6" fontWeight={700} color="text.secondary" mb={0.5}>
+              No sales recorded
+            </Typography>
+            <Typography variant="body2" color="text.disabled">
+              {mode === 'today'
+                ? 'No sales have been made today yet.'
+                : `No sales found for ${periodLabel}.`}
             </Typography>
           </Box>
-        ) : (
-          <>
-            <Box sx={{ p: 2, pb: 0 }}>
-              <Typography variant="subtitle2" fontWeight={700} color="text.secondary">
-                EMPLOYEE PERFORMANCE BREAKDOWN
+        </Card>
+      )}
+
+      {/* ── Mobile: Card list ── */}
+      {loaded && !loading && isMobile && activeEmps.length > 0 && (
+        <Box>
+          {/* Active employees */}
+          {activeEmps.map((emp, i) => (
+            <EmployeeMobileCard key={emp.id} emp={emp} rank={i + 1} totalRevenue={totalRevenue} />
+          ))}
+
+          {/* Unmatched if any */}
+          {report.find(r => r.id === '__other__' && r.invoiceCount > 0) && (() => {
+            const other = report.find(r => r.id === '__other__');
+            return (
+              <EmployeeMobileCard key="other" emp={other} rank={999} totalRevenue={totalRevenue} />
+            );
+          })()}
+
+          {/* Zero employees */}
+          {zeroEmps.length > 0 && (
+            <Box sx={{ mt: 1, p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 2 }}>
+              <Typography variant="caption" color="text.disabled" fontWeight={600} display="block" mb={1}>
+                NO SALES IN THIS PERIOD
               </Typography>
-              {!isMobile && (
-                <Typography variant="caption" color="text.secondary">
-                  Click any row to see individual sales · Sorted by revenue
-                </Typography>
-              )}
+              <Box display="flex" flexWrap="wrap" gap={1}>
+                {zeroEmps.map(e => (
+                  <Chip key={e.id} label={e.name} size="small" variant="outlined"
+                    sx={{ color: 'text.disabled', borderColor: 'divider' }} />
+                ))}
+              </Box>
             </Box>
-            <TableContainer>
-              <Table size={isMobile ? 'small' : 'medium'}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Employee</TableCell>
-                    <TableCell align="center">Invoices</TableCell>
-                    <TableCell align="right">Total Revenue</TableCell>
-                    {!isMobile && <TableCell align="right">Avg per Sale</TableCell>}
-                    {!isMobile && <TableCell align="center">Top Payment Type</TableCell>}
-                    <TableCell align="center">Details</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {report.map((emp, i) => (
-                    <EmployeeRow
-                      key={emp.id}
-                      emp={emp}
-                      rank={emp.id !== '__unmatched__' ? i + 1 : 999}
-                      isMobile={isMobile}
-                    />
-                  ))}
-                  {/* Totals row */}
-                  <TableRow sx={{ bgcolor: 'action.hover', fontWeight: 'bold' }}>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={700}>Total</Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip label={totalInvoices} size="small" color="primary" />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Typography fontWeight={800} color="success.main">{formatCurrency(totalSales)}</Typography>
-                    </TableCell>
-                    {!isMobile && (
-                      <TableCell align="right">
-                        <Typography variant="body2" fontWeight={600}>
-                          {totalInvoices > 0 ? formatCurrency(totalSales / totalInvoices) : '—'}
-                        </Typography>
-                      </TableCell>
-                    )}
-                    {!isMobile && <TableCell />}
-                    <TableCell />
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </TableContainer>
+          )}
+        </Box>
+      )}
 
-            {/* Per-day breakdown (only for month/custom) */}
-            {mode !== 'today' && (() => {
-              // Build per-day totals across all employees
-              const dayMap = {};
-              report.forEach(emp => {
-                (emp.sales || []).forEach(s => {
-                  const d = s.saleDate;
-                  if (!dayMap[d]) dayMap[d] = { date: d, total: 0, count: 0 };
-                  dayMap[d].total += s.grandTotal || 0;
-                  dayMap[d].count += 1;
-                });
-              });
-              const days = Object.values(dayMap).sort((a, b) => b.date.localeCompare(a.date));
-              if (days.length === 0) return null;
-              return (
-                <Box sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Typography variant="subtitle2" fontWeight={700} color="text.secondary" mb={1}>
-                    DAILY BREAKDOWN
-                  </Typography>
-                  <Grid container spacing={1}>
-                    {days.map(day => (
-                      <Grid key={day.date} item xs={6} sm={4} md={3}>
-                        <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-                          <Typography variant="caption" color="text.secondary">{formatDate(day.date)}</Typography>
-                          <Typography variant="body2" fontWeight={700} color="success.main">{formatCurrency(day.total)}</Typography>
-                          <Typography variant="caption" color="text.secondary">{day.count} sale{day.count !== 1 ? 's' : ''}</Typography>
-                        </Box>
-                      </Grid>
-                    ))}
-                  </Grid>
-                </Box>
-              );
-            })()}
-          </>
-        )}
-      </Card>
+      {/* ── Desktop: Table ── */}
+      {loaded && !loading && !isMobile && activeEmps.length > 0 && (
+        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
+            <Typography variant="caption" fontWeight={700} color="text.secondary">
+              LEADERBOARD — {periodLabel.toUpperCase()} · click row to expand individual sales
+            </Typography>
+          </Box>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow sx={{ bgcolor: 'grey.50' }}>
+                  <TableCell sx={{ fontWeight: 700 }}>Employee</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 200 }}>Revenue</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }} align="center">Invoices</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }} align="right">Avg / Sale</TableCell>
+                  <TableCell width={48} />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {/* Ranked active employees */}
+                {activeEmps.map((emp, i) => (
+                  <EmployeeDesktopRow key={emp.id} emp={emp} rank={i + 1} totalRevenue={totalRevenue} />
+                ))}
 
-      {/* Note about matching */}
-      <Alert severity="info" sx={{ mt: 2 }} icon={false}>
-        <Typography variant="caption">
-          Sales are matched to employees by the <strong>Salesperson</strong> name entered during sale creation.
-          Make sure salesperson names match employee names exactly for accurate reporting.
-        </Typography>
-      </Alert>
+                {/* Unmatched */}
+                {report.find(r => r.id === '__other__' && r.invoiceCount > 0) && (() => {
+                  const other = report.find(r => r.id === '__other__');
+                  return <EmployeeDesktopRow key="other" emp={other} rank={999} totalRevenue={totalRevenue} />;
+                })()}
+
+                {/* Totals row */}
+                <TableRow sx={{ bgcolor: 'grey.50', '& td': { borderTop: '2px solid', borderColor: 'primary.light' } }}>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={700}>Total</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={800} color="success.main">
+                      {formatCurrency(totalRevenue)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="center">
+                    <Chip label={totalInvoices} size="small" color="primary" sx={{ fontWeight: 700 }} />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="body2" color="text.secondary">
+                      {totalInvoices > 0 ? formatCurrency(totalRevenue / totalInvoices) : '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          {/* Zero-sale employees */}
+          <ZeroSalesBadge employees={zeroEmps} />
+        </Card>
+      )}
+
+      {/* Matching note */}
+      {loaded && (
+        <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+          <Typography variant="caption">
+            Sales are matched to employees by the <strong>Salesperson</strong> name entered on the sale.
+            Names must match exactly — e.g. "Rahul" ≠ "Rahul Kumar".
+          </Typography>
+        </Alert>
+      )}
     </Box>
   );
 };
