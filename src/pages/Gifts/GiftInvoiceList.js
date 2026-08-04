@@ -11,9 +11,9 @@ import {
   Box, Typography, Button, Card, CardContent, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, TablePagination,
   Chip, IconButton, LinearProgress, Dialog, DialogTitle,
-  DialogContent, DialogActions, useTheme, useMediaQuery, Stack,
+  DialogContent, DialogActions, useTheme, useMediaQuery, Stack, Tooltip,
 } from '@mui/material';
-import { Add, Edit, Delete, CardGiftcard } from '@mui/icons-material';
+import { Add, Edit, Delete, CardGiftcard, Print } from '@mui/icons-material';
 import {
   collection, query, orderBy, limit, startAfter, getDocs,
   deleteDoc, doc, getCountFromServer, where,
@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatDate } from '../../utils';
 import MonthSearchBar from '../../components/MonthSearchBar';
+import { printGiftInvoice } from '../../utils/giftInvoicePrint';
 
 const PAGE_SIZE = 10;
 
@@ -65,11 +66,11 @@ const statusChip = (row) => {
   return { label: 'Pending', color: 'error' };
 };
 
-const MobileCard = ({ row, navigate, onDelete }) => {
+const MobileCard = ({ row, navigate, onDelete, onPrint }) => {
   const status = statusChip(row);
   return (
     <Card elevation={0} sx={{ mb: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2, cursor: 'pointer' }}
-      onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
+      onClick={() => navigate(`/gift-invoices/${row.id}`)}>
       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={0.5}>
           <Box>
@@ -87,12 +88,21 @@ const MobileCard = ({ row, navigate, onDelete }) => {
         </Box>
         <DeliveryProgress items={row.items} />
         <Box display="flex" gap={1} mt={1.5} onClick={e => e.stopPropagation()}>
-          <IconButton size="small" onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
-            <Edit fontSize="small" />
-          </IconButton>
-          <IconButton size="small" color="error" onClick={() => onDelete(row.id)}>
-            <Delete fontSize="small" />
-          </IconButton>
+          <Tooltip title="Print Invoice">
+            <IconButton size="small" color="secondary" onClick={() => onPrint(row)}>
+              <Print fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Edit Invoice">
+            <IconButton size="small" onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
+              <Edit fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Delete Invoice">
+            <IconButton size="small" color="error" onClick={() => onDelete(row.id)}>
+              <Delete fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Box>
       </CardContent>
     </Card>
@@ -246,7 +256,7 @@ const GiftInvoiceList = () => {
                 </Box>
               )
               : rows.map(row => (
-                  <MobileCard key={row.id} row={row} navigate={navigate} onDelete={setDeleteId} />
+                  <MobileCard key={row.id} row={row} navigate={navigate} onDelete={setDeleteId} onPrint={printGiftInvoice} />
                 ))
           }
           {rows.length > 0 && (
@@ -295,7 +305,7 @@ const GiftInvoiceList = () => {
                         const status = statusChip(row);
                         return (
                           <TableRow key={row.id} hover sx={{ cursor: 'pointer' }}
-                            onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
+                            onClick={() => navigate(`/gift-invoices/${row.id}`)}>
                             <TableCell><Typography variant="body2" fontWeight={600}>{row.invoiceNumber}</Typography></TableCell>
                             <TableCell><Typography variant="caption">{formatDate(row.date)}</Typography></TableCell>
                             <TableCell>
@@ -311,12 +321,21 @@ const GiftInvoiceList = () => {
                             <TableCell><DeliveryProgress items={row.items} /></TableCell>
                             <TableCell><Chip label={status.label} color={status.color} size="small" /></TableCell>
                             <TableCell align="right" onClick={e => e.stopPropagation()}>
-                              <IconButton size="small" onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
-                                <Edit fontSize="small" />
-                              </IconButton>
-                              <IconButton size="small" color="error" onClick={() => setDeleteId(row.id)}>
-                                <Delete fontSize="small" />
-                              </IconButton>
+                              <Tooltip title="Print Invoice">
+                                <IconButton size="small" color="secondary" onClick={() => printGiftInvoice(row)}>
+                                  <Print fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Edit Invoice">
+                                <IconButton size="small" onClick={() => navigate(`/gift-invoices/edit/${row.id}`)}>
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete Invoice">
+                                <IconButton size="small" color="error" onClick={() => setDeleteId(row.id)}>
+                                  <Delete fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </TableCell>
                           </TableRow>
                         );
