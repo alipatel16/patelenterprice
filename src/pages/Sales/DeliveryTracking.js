@@ -22,6 +22,21 @@ import { useMediaQuery, useTheme } from '@mui/material';
 
 const PAGE_SIZE = 10;
 
+// Some older/previously-updated sale documents can carry delivery completion
+// in deliveryStatus/actualDeliveryDate even when isDelivered is missing or was
+// stored as a string. Treat all supported persisted forms consistently so a
+// completed scheduled delivery never reappears in Pending Deliveries.
+const isSaleDelivered = (sale = {}) => {
+  if (sale.isDelivered === true || String(sale.isDelivered).toLowerCase() === 'true') return true;
+
+  const status = String(sale.deliveryStatus || '').trim().toLowerCase();
+  if (status === 'delivered' || status === 'completed') return true;
+
+  // Legacy records may only have the actual delivered date. A record explicitly
+  // marked pending still wins, so a stale date cannot hide a reverted delivery.
+  return Boolean(sale.actualDeliveryDate) && status !== 'pending';
+};
+
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
 
@@ -119,8 +134,8 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
         // ── FIX: server-side filter on deliveryType ──────────────────────
         // Before: limit(500) read every recent sale, discarding ~490 of them.
         // After:  Firestore returns ONLY scheduled sales (typically 10–30).
-        // The client-side isDelivered !== true check stays to handle legacy
-        // docs created before the isDelivered field existed.
+        // A compatibility check below handles legacy/partially-migrated docs where
+        // completion may live in deliveryStatus or actualDeliveryDate instead.
         const snap = await getDocs(query(
           collection(db, 'sales'),
           where('deliveryType', '==', 'scheduled'),
@@ -130,7 +145,7 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
         if (!active) return;
         const docs = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.isDelivered !== true)  // exclude already-delivered
+          .filter(d => !isSaleDelivered(d))
           .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
         setAllDocs(docs);
       } catch (err) {

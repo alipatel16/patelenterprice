@@ -28,7 +28,7 @@ import {
   applyInventoryDeltas,
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
-import { normalizeCustomer } from '../../utils/normalizeDoc';
+import { normalizeCustomer, normalizeProduct } from '../../utils/normalizeDoc';
 import { getOrFetch } from '../../utils/lookupCache';
 import { getInventoryForProducts, invalidateInventoryCache } from '../../utils/inventoryCache';
 import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
@@ -38,6 +38,10 @@ const EMPTY_ITEM = { productId: '', productName: '', qty: 1, price: 0, gstRate: 
 const EMPTY_CUSTOMER_FORM = {
   name: '', phone: '', email: '', address: '', city: '',
   state: 'Gujarat', customerType: 'retail', category: 'individual',
+};
+const EMPTY_PRODUCT_FORM = {
+  name: '', maker: '', description: '', hsnCode: '', price: '',
+  gstRate: 18, category: '', unit: 'pcs',
 };
 const DELIVERY_TYPES = { IMMEDIATE: 'immediate', SCHEDULED: 'scheduled' };
 
@@ -90,6 +94,101 @@ const NewCustomerDialog = ({ open, onClose, onSave }) => {
         <Button onClick={handleSave} variant="contained" disabled={loading}
           startIcon={loading ? <CircularProgress size={16} /> : <Save />}>
           Save Customer
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// ─── Quick Add Product Dialog ─────────────────────────────────────────────────
+// Mirrors the Products master form so products created from a sale have the
+// exact same shape/search fields as products created from the Products page.
+const NewProductDialog = ({ open, onClose, onSave }) => {
+  const [form, setForm] = useState(EMPTY_PRODUCT_FORM);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (open) {
+      setForm(EMPTY_PRODUCT_FORM);
+      setError('');
+    }
+  }, [open]);
+
+  const handleSave = async () => {
+    if (!form.name || !form.price) {
+      setError('Product name and price are required');
+      return;
+    }
+    if (isNaN(parseFloat(form.price))) {
+      setError('Price must be a valid number');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await onSave({ ...form, price: parseFloat(form.price) });
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Quick Add Product</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <Grid container spacing={2} mt={0}>
+          <Grid item xs={12}>
+            <TextField fullWidth label="Product Name *" value={form.name} onChange={set('name')} size="small" />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField fullWidth label="Maker / Brand" value={form.maker} onChange={set('maker')} size="small" />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField fullWidth label="Category" value={form.category} onChange={set('category')} size="small" />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField fullWidth label="Description" value={form.description} onChange={set('description')} size="small" multiline rows={2} />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField fullWidth label="HSN Code" value={form.hsnCode} onChange={set('hsnCode')} size="small" />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField fullWidth label="Unit" value={form.unit} onChange={set('unit')} size="small" select>
+              {['pcs', 'set', 'kg', 'meter', 'box'].map(u => <MenuItem key={u} value={u}>{u}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth label="MRP / Price (₹) *" value={form.price} onChange={set('price')}
+              size="small" type="number"
+              InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>GST Rate</InputLabel>
+              <Select value={form.gstRate} onChange={set('gstRate')} label="GST Rate">
+                {GST_SLABS.map(r => <MenuItem key={r} value={r}>{r}%</MenuItem>)}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          onClick={handleSave}
+          variant="contained"
+          disabled={loading}
+          startIcon={loading ? <CircularProgress size={16} /> : <Save />}
+        >
+          Save Product
         </Button>
       </DialogActions>
     </Dialog>
@@ -190,6 +289,7 @@ const CreateSale = () => {
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
   const [notes, setNotes] = useState('');
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [newProductTarget, setNewProductTarget] = useState(null);
   const [bulkEntryOpen, setBulkEntryOpen] = useState(false);
   const [bulkPrice, setBulkPrice] = useState(0);
 
@@ -410,6 +510,40 @@ const CreateSale = () => {
     // Flush search cache so new customer appears in next FirestoreAutocomplete query
     invalidateSearchCache('customers');
     toast.success('Customer added');
+  };
+
+  const handleAddNewProduct = async form => {
+    const ref = await addDoc(collection(db, 'products'), {
+      ...normalizeProduct(form),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    const newProduct = { id: ref.id, ...form };
+
+    // Keep the same cache/search architecture as the Products page and the
+    // existing customer quick-add flow. No full product reload is performed.
+    setProducts(p => [...p, newProduct]);
+    invalidateSearchCache('products');
+    setInventory(prev => ({ ...prev, [ref.id]: 0 }));
+
+    // Select the newly-created product only in the sale line that requested it.
+    if (newProductTarget !== null) {
+      setItems(prev => prev.map((item, index) => index === newProductTarget
+        ? {
+            ...item,
+            productId: newProduct.id,
+            productName: newProduct.name,
+            price: newProduct.price ?? 0,
+            gstRate: newProduct.gstRate ?? 18,
+            unit: newProduct.unit || 'pcs',
+            hsnCode: newProduct.hsnCode || '',
+            description: newProduct.description || '',
+            productObj: newProduct,
+          }
+        : item));
+    }
+
+    toast.success('Product added');
   };
 
   const buildSaleData = (invoiceNumber, company) => ({
@@ -761,6 +895,16 @@ const CreateSale = () => {
                 <Grid container spacing={1} alignItems="center">
                   {/* Product */}
                   <Grid item xs={12} sm={bulkPrice > 0 ? 8 : (withGST ? 4 : 5)}>
+                    <Box display="flex" justifyContent="flex-end" mb={0.5}>
+                      <Button
+                        size="small"
+                        startIcon={<AddCircle />}
+                        onClick={() => setNewProductTarget(idx)}
+                        sx={{ minWidth: 0, px: 1 }}
+                      >
+                        New Product
+                      </Button>
+                    </Box>
                     {/* <Autocomplete
                       fullWidth
                       size="small"
@@ -1178,6 +1322,11 @@ const CreateSale = () => {
         open={newCustomerOpen}
         onClose={() => setNewCustomerOpen(false)}
         onSave={handleAddNewCustomer}
+      />
+      <NewProductDialog
+        open={newProductTarget !== null}
+        onClose={() => setNewProductTarget(null)}
+        onSave={handleAddNewProduct}
       />
       <BulkPriceDialog
         open={bulkEntryOpen}
