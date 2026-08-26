@@ -1,17 +1,16 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Box, Typography, Card, CardContent, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TablePagination, Chip, IconButton,
+  Box, Typography, Card, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Chip, IconButton,
   Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  TextField, Stack, Alert, CircularProgress, Tab, Tabs, InputAdornment,
-  Avatar, Divider,
+  TextField, Stack, CircularProgress, Tab, Tabs, InputAdornment,
 } from '@mui/material';
 import {
   LocalShipping, CheckCircle, Schedule, Search, Refresh,
-  DoneAll, CalendarMonth,
+  DoneAll, CalendarMonth, ChevronLeft, ChevronRight,
 } from '@mui/icons-material';
 import {
-  collection, query, where, orderBy, limit,
+  collection, query, where, orderBy, limit, startAfter,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,24 +20,53 @@ import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
 const PAGE_SIZE = 10;
+const QUERY_SIZE = PAGE_SIZE + 1;
 
-// Some older/previously-updated sale documents can carry delivery completion
-// in deliveryStatus/actualDeliveryDate even when isDelivered is missing or was
-// stored as a string. Treat all supported persisted forms consistently so a
-// completed scheduled delivery never reappears in Pending Deliveries.
+// Compatibility guard for old records. New records use boolean isDelivered as
+// the canonical queue field, while these checks ensure an older inconsistent
+// document can never be shown as pending just because isDelivered was stale.
 const isSaleDelivered = (sale = {}) => {
   if (sale.isDelivered === true || String(sale.isDelivered).toLowerCase() === 'true') return true;
 
   const status = String(sale.deliveryStatus || '').trim().toLowerCase();
   if (status === 'delivered' || status === 'completed') return true;
+  if (status === 'pending') return false;
 
-  // Legacy records may only have the actual delivered date. A record explicitly
-  // marked pending still wins, so a stale date cannot hide a reverted delivery.
-  return Boolean(sale.actualDeliveryDate) && status !== 'pending';
+  return Boolean(sale.actualDeliveryDate);
 };
+
+const isScheduledSale = (sale = {}) => sale.deliveryType === 'scheduled';
 
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
+
+const PageControls = ({ page, hasNext, loading, onPrevious, onNext }) => (
+  <Stack
+    direction="row"
+    alignItems="center"
+    justifyContent="flex-end"
+    spacing={1}
+    sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}
+  >
+    <Button
+      size="small"
+      startIcon={<ChevronLeft />}
+      disabled={loading || page === 0}
+      onClick={onPrevious}
+    >
+      Previous
+    </Button>
+    <Chip label={`Page ${page + 1}`} size="small" variant="outlined" />
+    <Button
+      size="small"
+      endIcon={<ChevronRight />}
+      disabled={loading || !hasNext}
+      onClick={onNext}
+    >
+      Next
+    </Button>
+  </Stack>
+);
 
 // ─── Mark Delivered Dialog ────────────────────────────────────────────────────
 
@@ -83,8 +111,13 @@ const MarkDeliveredDialog = ({ open, onClose, sale, onConfirm }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} variant="outlined" disabled={loading}>Cancel</Button>
-        <Button onClick={handleConfirm} variant="contained" color="success" disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} /> : <CheckCircle />}>
+        <Button
+          onClick={handleConfirm}
+          variant="contained"
+          color="success"
+          disabled={loading}
+          startIcon={loading ? <CircularProgress size={16} /> : <CheckCircle />}
+        >
           Confirm Delivery
         </Button>
       </DialogActions>
@@ -92,120 +125,156 @@ const MarkDeliveredDialog = ({ open, onClose, sale, onConfirm }) => {
   );
 };
 
-// ─── Pending Deliveries Tab ───────────────────────────────────────────────────
+// ─── Pending Deliveries ───────────────────────────────────────────────────────
 //
-// FIX: was limit(500) reading ALL sales then client-filtering.
-//      Now queries only scheduled deliveries server-side.
-//
-// ⚠️  COMPOSITE INDEX REQUIRED on first run:
-//      Collection : sales
-//      Fields     : deliveryType (Ascending) + saleDate (Descending)
-//      Firestore will log a clickable auto-create URL in the console.
+// Fresh queue logic:
+//   • Firestore itself filters isDelivered === false.
+//   • Results are ordered by expected delivery date.
+//   • Only PAGE_SIZE + 1 docs are read per page; the extra doc is used only to
+//     determine whether a Next page exists.
+//   • No count query and no bulk read are performed.
+//   • The compatibility guard hides previously-corrupted legacy records where
+//     deliveryStatus/actualDeliveryDate already prove delivery completion.
 
-const PendingDeliveriesTab = ({ db, onDelivered }) => {
+const PendingDeliveriesTab = ({ db }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [allDocs, setAllDocs] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [page, setPage] = useState(0);
+  const pageCursorsRef = useRef([null]);
+  const [hasNext, setHasNext] = useState(false);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [markDialog, setMarkDialog] = useState(null);
   const searchTimer = useRef(null);
 
-  const handleSearch = (v) => {
-    setSearch(v);
+  const handleSearch = (value) => {
+    setSearch(value);
     clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(v);
-      setPage(0);
-    }, 400);
+    searchTimer.current = setTimeout(() => setDebouncedSearch(value), 300);
+  };
+
+  const resetToFirstPage = () => {
+    setPage(0);
+    pageCursorsRef.current = [null];
+    setRefreshKey(k => k + 1);
   };
 
   useEffect(() => {
     if (!db) return;
     let active = true;
+
     const load = async () => {
       setLoading(true);
       try {
-        // ── FIX: server-side filter on deliveryType ──────────────────────
-        // Before: limit(500) read every recent sale, discarding ~490 of them.
-        // After:  Firestore returns ONLY scheduled sales (typically 10–30).
-        // A compatibility check below handles legacy/partially-migrated docs where
-        // completion may live in deliveryStatus or actualDeliveryDate instead.
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('deliveryType', '==', 'scheduled'),
-          orderBy('saleDate', 'desc'),
-          limit(200),                          // safety cap; was 500
-        ));
+        const constraints = [
+          where('isDelivered', '==', false),
+          orderBy('deliveryDate', 'asc'),
+          limit(QUERY_SIZE),
+        ];
+
+        const cursor = pageCursorsRef.current[page];
+        if (page > 0 && cursor) constraints.push(startAfter(cursor));
+
+        let snap;
+        try {
+          snap = await getDocs(query(collection(db, 'sales'), ...constraints));
+        } catch (err) {
+          // Some existing production projects may not yet have the composite
+          // index for isDelivered + deliveryDate. Fall back to the automatic
+          // single-field isDelivered index instead of breaking the live page.
+          if (err?.code !== 'failed-precondition') throw err;
+          const fallbackConstraints = [
+            where('isDelivered', '==', false),
+            limit(QUERY_SIZE),
+          ];
+          if (page > 0 && cursor) fallbackConstraints.push(startAfter(cursor));
+          snap = await getDocs(query(collection(db, 'sales'), ...fallbackConstraints));
+        }
         if (!active) return;
-        const docs = snap.docs
+
+        // Consume exactly PAGE_SIZE raw documents for this cursor page. The
+        // extra document is only a look-ahead and is not displayed/read again
+        // until the user explicitly requests the next page.
+        const rawPageDocs = snap.docs.slice(0, PAGE_SIZE);
+        const pageRows = rawPageDocs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => !isSaleDelivered(d))
+          .filter(d => isScheduledSale(d) && !isSaleDelivered(d))
           .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
-        setAllDocs(docs);
+
+        setRows(pageRows);
+        setHasNext(snap.docs.length > PAGE_SIZE);
+
+        if (rawPageDocs.length > 0) {
+          const nextCursor = rawPageDocs[rawPageDocs.length - 1];
+          pageCursorsRef.current[page + 1] = nextCursor;
+        }
       } catch (err) {
         if (!active) return;
-        toast.error('Failed to load deliveries: ' + err.message);
+        toast.error('Failed to load pending deliveries: ' + err.message);
       } finally {
         if (active) setLoading(false);
       }
     };
+
     load();
     return () => { active = false; };
-  }, [db, refreshKey]);
+  }, [db, page, refreshKey]);
 
-  const filtered = useMemo(() => {
-    if (!debouncedSearch.trim()) return allDocs;
-    const s = debouncedSearch.toLowerCase();
-    return allDocs.filter(d =>
-      (d.invoiceNumber || '').toLowerCase().includes(s) ||
-      (d.customerName  || '').toLowerCase().includes(s) ||
-      (d.customerPhone || '').includes(s)
+  const visibleRows = useMemo(() => {
+    const term = debouncedSearch.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(d =>
+      (d.invoiceNumber || '').toLowerCase().includes(term) ||
+      (d.customerName || '').toLowerCase().includes(term) ||
+      (d.customerPhone || '').includes(term)
     );
-  }, [allDocs, debouncedSearch]);
-
-  const pageRows = useMemo(
-    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtered, page]
-  );
+  }, [rows, debouncedSearch]);
 
   const handleMarkDelivered = async (deliveredDate) => {
+    if (!markDialog?.id) return;
+
     await updateDoc(doc(db, 'sales', markDialog.id), {
       isDelivered: true,
-      actualDeliveryDate: deliveredDate,
       deliveryStatus: 'delivered',
+      actualDeliveryDate: deliveredDate,
       updatedAt: serverTimestamp(),
     });
+
     toast.success('Delivery marked as completed!');
     setMarkDialog(null);
-    setPage(0);
-    setRefreshKey(k => k + 1);
-    onDelivered();
+    resetToFirstPage();
   };
 
   const isOverdue = (deliveryDate) =>
-    deliveryDate ? new Date(deliveryDate) < new Date() : false;
+    deliveryDate ? new Date(`${deliveryDate}T23:59:59`) < new Date() : false;
 
   return (
     <Box>
-      <Box sx={{ mb: 2 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 2 }}>
         <TextField
-          placeholder="Search invoice, customer..."
+          placeholder="Filter current page by invoice or customer..."
           value={search}
           onChange={e => handleSearch(e.target.value)}
           size="small"
           fullWidth
-          sx={{ maxWidth: 400 }}
+          sx={{ maxWidth: 430 }}
           InputProps={{
-            startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment>
+            startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment>,
           }}
         />
-      </Box>
+        <Tooltip title="Refresh pending deliveries">
+          <span>
+            <IconButton onClick={resetToFirstPage} disabled={loading}>
+              <Refresh />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Stack>
 
       <Card>
         <TableContainer>
@@ -223,29 +292,31 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
               {loading
                 ? Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: isMobile ? 3 : 5 }).map((_, j) => (
-                        <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
+                      {Array.from({ length: isMobile ? 3 : 5 }).map((__, j) => (
+                        <TableCell key={j}>
+                          <Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} />
+                        </TableCell>
                       ))}
                     </TableRow>
                   ))
-                : pageRows.length === 0
+                : visibleRows.length === 0
                   ? (
                     <TableRow>
                       <TableCell colSpan={isMobile ? 3 : 5} align="center" sx={{ py: 6 }}>
                         <Box>
                           <DoneAll sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
-                          <Typography color="text.secondary">No pending deliveries! All caught up 🎉</Typography>
+                          <Typography color="text.secondary">
+                            {debouncedSearch ? 'No matching delivery on this page' : 'No pending deliveries on this page'}
+                          </Typography>
                         </Box>
                       </TableCell>
                     </TableRow>
                   )
-                  : pageRows.map(row => {
+                  : visibleRows.map(row => {
                     const overdue = isOverdue(row.deliveryDate);
                     return (
-                      <TableRow key={row.id} hover
-                        sx={{ bgcolor: overdue ? 'error.50' : 'inherit', cursor: 'pointer' }}
-                      >
-                        <TableCell onClick={() => navigate(`/sales/${row.id}`)}>
+                      <TableRow key={row.id} hover sx={{ bgcolor: overdue ? 'error.50' : 'inherit' }}>
+                        <TableCell onClick={() => navigate(`/sales/${row.id}`)} sx={{ cursor: 'pointer' }}>
                           <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
                           <Typography variant="caption" color="text.secondary">{row.customerName}</Typography>
                           <br />
@@ -270,12 +341,14 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
                           <Box display="flex" alignItems="center" gap={0.5}>
                             <CalendarMonth fontSize="small" color={overdue ? 'error' : 'warning'} />
                             <Box>
-                              <Typography variant="body2" color={overdue ? 'error.main' : 'warning.main'} fontWeight={600}>
+                              <Typography
+                                variant="body2"
+                                color={overdue ? 'error.main' : 'warning.main'}
+                                fontWeight={600}
+                              >
                                 {formatDate(row.deliveryDate)}
                               </Typography>
-                              {overdue && (
-                                <Typography variant="caption" color="error">Overdue</Typography>
-                              )}
+                              {overdue && <Typography variant="caption" color="error">Overdue</Typography>}
                             </Box>
                           </Box>
                         </TableCell>
@@ -291,8 +364,8 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
                               variant="contained"
                               color="success"
                               startIcon={<CheckCircle fontSize="small" />}
-                              onClick={(e) => { e.stopPropagation(); setMarkDialog(row); }}
-                              sx={{ whiteSpace: 'nowrap', minWidth: { xs: 'auto', sm: 'auto' } }}
+                              onClick={() => setMarkDialog(row)}
+                              sx={{ whiteSpace: 'nowrap' }}
                             >
                               {isMobile ? '✓' : 'Delivered'}
                             </Button>
@@ -300,18 +373,17 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
                         </TableCell>
                       </TableRow>
                     );
-                  })
-              }
+                  })}
             </TableBody>
           </Table>
         </TableContainer>
-        <TablePagination
-          component="div"
-          count={filtered.length}
+
+        <PageControls
           page={page}
-          rowsPerPage={PAGE_SIZE}
-          onPageChange={(_, p) => setPage(p)}
-          rowsPerPageOptions={[PAGE_SIZE]}
+          hasNext={hasNext}
+          loading={loading}
+          onPrevious={() => setPage(p => Math.max(0, p - 1))}
+          onNext={() => hasNext && setPage(p => p + 1)}
         />
       </Card>
 
@@ -325,52 +397,57 @@ const PendingDeliveriesTab = ({ db, onDelivered }) => {
   );
 };
 
-// ─── Recently Delivered Tab ───────────────────────────────────────────────────
+// ─── Delivered ────────────────────────────────────────────────────────────────
 //
-// FIX: was limit(500) reading ALL sales then client-filtering to isDelivered.
-//      Now queries only delivered sales server-side.
-//
-// ⚠️  COMPOSITE INDEX REQUIRED on first run:
-//      Collection : sales
-//      Fields     : isDelivered (Ascending) + saleDate (Descending)
+// Marking a scheduled delivery writes actualDeliveryDate. Firestore orderBy
+// only returns documents where that field exists, so immediate sales are not
+// loaded into this tab at all. This keeps the delivered history on-demand and
+// avoids scanning ordinary sales.
 
-const RecentlyDeliveredTab = ({ db, refresh }) => {
+const RecentlyDeliveredTab = ({ db }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [allDocs, setAllDocs] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
+  const pageCursorsRef = useRef([null]);
+  const [hasNext, setHasNext] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!db) return;
     let active = true;
-    setLoading(true);
 
     const load = async () => {
+      setLoading(true);
       try {
-        // ── FIX: server-side filter on isDelivered ───────────────────────
-        // Before: limit(500) read every recent sale, then filtered in memory.
-        // After:  Firestore returns ONLY delivered sales.
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('isDelivered', '==', true),
-          orderBy('saleDate', 'desc'),
-          limit(200),                          // safety cap; was 500
-        ));
+        const constraints = [
+          orderBy('actualDeliveryDate', 'desc'),
+          limit(QUERY_SIZE),
+        ];
+        const cursor = pageCursorsRef.current[page];
+        if (page > 0 && cursor) constraints.push(startAfter(cursor));
+
+        const snap = await getDocs(query(collection(db, 'sales'), ...constraints));
         if (!active) return;
-        // Sort by actual delivery date (newest first); done in memory since
-        // actualDeliveryDate is not a reliable sort field server-side
-        // (older records may not have it).
-        const docs = snap.docs
+
+        const rawPageDocs = snap.docs.slice(0, PAGE_SIZE);
+        const pageRows = rawPageDocs
           .map(d => ({ id: d.id, ...d.data() }))
-          .sort((a, b) => (b.actualDeliveryDate || '').localeCompare(a.actualDeliveryDate || ''));
-        setAllDocs(docs);
-        setPage(0);
+          .filter(d => isScheduledSale(d) && isSaleDelivered(d));
+
+        setRows(pageRows);
+        setHasNext(snap.docs.length > PAGE_SIZE);
+
+        if (rawPageDocs.length > 0) {
+          const nextCursor = rawPageDocs[rawPageDocs.length - 1];
+          pageCursorsRef.current[page + 1] = nextCursor;
+        }
       } catch (err) {
         if (!active) return;
-        toast.error('Failed to load delivered items');
+        toast.error('Failed to load delivered items: ' + err.message);
       } finally {
         if (active) setLoading(false);
       }
@@ -378,83 +455,94 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
 
     load();
     return () => { active = false; };
-  }, [db, refresh]);
+  }, [db, page, refreshKey]);
 
-  const pageRows = useMemo(
-    () => allDocs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [allDocs, page]
-  );
+  const refreshCurrent = () => setRefreshKey(k => k + 1);
 
   return (
-    <Card>
-      <TableContainer>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Invoice / Customer</TableCell>
-              {!isMobile && <TableCell>Products</TableCell>}
-              <TableCell>Delivered On</TableCell>
-              {!isMobile && <TableCell align="right">Amount</TableCell>}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading
-              ? Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: isMobile ? 2 : 4 }).map((_, j) => (
-                      <TableCell key={j}><Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : pageRows.length === 0
-                ? (
-                  <TableRow>
-                    <TableCell colSpan={isMobile ? 2 : 4} align="center" sx={{ py: 6 }}>
-                      <Typography color="text.secondary">No delivered items yet</Typography>
-                    </TableCell>
-                  </TableRow>
-                )
-                : pageRows.map(row => (
-                  <TableRow key={row.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/sales/${row.id}`)}>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
-                      <Typography variant="caption" color="text.secondary">{row.customerName}</Typography>
-                    </TableCell>
-                    {!isMobile && (
+    <Box>
+      <Box display="flex" justifyContent="flex-end" sx={{ mb: 1 }}>
+        <Tooltip title="Refresh delivered history">
+          <span>
+            <IconButton onClick={refreshCurrent} disabled={loading}><Refresh /></IconButton>
+          </span>
+        </Tooltip>
+      </Box>
+
+      <Card>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Invoice / Customer</TableCell>
+                {!isMobile && <TableCell>Products</TableCell>}
+                <TableCell>Delivered On</TableCell>
+                {!isMobile && <TableCell align="right">Amount</TableCell>}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {loading
+                ? Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: isMobile ? 2 : 4 }).map((__, j) => (
+                        <TableCell key={j}>
+                          <Box sx={{ height: 20, bgcolor: 'action.hover', borderRadius: 1 }} />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : rows.length === 0
+                  ? (
+                    <TableRow>
+                      <TableCell colSpan={isMobile ? 2 : 4} align="center" sx={{ py: 6 }}>
+                        <Typography color="text.secondary">No delivered items on this page</Typography>
+                      </TableCell>
+                    </TableRow>
+                  )
+                  : rows.map(row => (
+                    <TableRow
+                      key={row.id}
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => navigate(`/sales/${row.id}`)}
+                    >
                       <TableCell>
-                        <Typography variant="body2">
-                          {row.items?.map(i => i.productName).join(', ')}
-                        </Typography>
+                        <Typography variant="body2" fontWeight={600} color="primary">{row.invoiceNumber}</Typography>
+                        <Typography variant="caption" color="text.secondary">{row.customerName}</Typography>
                       </TableCell>
-                    )}
-                    <TableCell>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <CheckCircle fontSize="small" color="success" />
-                        <Typography variant="body2" color="success.main" fontWeight={600}>
-                          {formatDate(row.actualDeliveryDate)}
-                        </Typography>
-                      </Box>
-                    </TableCell>
-                    {!isMobile && (
-                      <TableCell align="right">
-                        <Typography variant="body2" fontWeight={600}>{formatCurrency(row.grandTotal)}</Typography>
+                      {!isMobile && (
+                        <TableCell>
+                          <Typography variant="body2">{row.items?.map(i => i.productName).join(', ')}</Typography>
+                        </TableCell>
+                      )}
+                      <TableCell>
+                        <Box display="flex" alignItems="center" gap={0.5}>
+                          <CheckCircle fontSize="small" color="success" />
+                          <Typography variant="body2" color="success.main" fontWeight={600}>
+                            {formatDate(row.actualDeliveryDate)}
+                          </Typography>
+                        </Box>
                       </TableCell>
-                    )}
-                  </TableRow>
-                ))
-            }
-          </TableBody>
-        </Table>
-      </TableContainer>
-      <TablePagination
-        component="div"
-        count={allDocs.length}
-        page={page}
-        rowsPerPage={PAGE_SIZE}
-        onPageChange={(_, p) => setPage(p)}
-        rowsPerPageOptions={[PAGE_SIZE]}
-      />
-    </Card>
+                      {!isMobile && (
+                        <TableCell align="right">
+                          <Typography variant="body2" fontWeight={600}>{formatCurrency(row.grandTotal)}</Typography>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        <PageControls
+          page={page}
+          hasNext={hasNext}
+          loading={loading}
+          onPrevious={() => setPage(p => Math.max(0, p - 1))}
+          onNext={() => hasNext && setPage(p => p + 1)}
+        />
+      </Card>
+    </Box>
   );
 };
 
@@ -463,19 +551,17 @@ const RecentlyDeliveredTab = ({ db, refresh }) => {
 const DeliveryTracking = () => {
   const { db } = useAuth();
   const [tab, setTab] = useState(0);
-  const [deliveredRefresh, setDeliveredRefresh] = useState(0);
-
-  const handleDelivered = () => {
-    setDeliveredRefresh(r => r + 1);
-  };
-
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
-      {/* Header */}
       <Box display="flex" alignItems="center" gap={2} mb={3}>
         <Box sx={{
-          width: 44, height: 44, borderRadius: 2,
-          bgcolor: 'warning.main', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 44,
+          height: 44,
+          borderRadius: 2,
+          bgcolor: 'warning.main',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}>
           <LocalShipping sx={{ color: '#fff' }} />
         </Box>
@@ -485,19 +571,18 @@ const DeliveryTracking = () => {
         </Box>
       </Box>
 
-      {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 0 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs value={tab} onChange={(_, value) => setTab(value)}>
           <Tab icon={<Schedule fontSize="small" />} iconPosition="start" label="Pending Deliveries" />
           <Tab icon={<DoneAll fontSize="small" />} iconPosition="start" label="Delivered" />
         </Tabs>
       </Box>
 
       <TabPanel value={tab} index={0}>
-        <PendingDeliveriesTab db={db} onDelivered={handleDelivered} />
+        <PendingDeliveriesTab db={db} />
       </TabPanel>
       <TabPanel value={tab} index={1}>
-        <RecentlyDeliveredTab db={db} refresh={deliveredRefresh} />
+        <RecentlyDeliveredTab db={db} />
       </TabPanel>
     </Box>
   );

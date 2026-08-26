@@ -13,7 +13,7 @@ import {
 } from '@mui/icons-material';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp, getDoc, where, getCountFromServer,
+  serverTimestamp, deleteField, getDoc, where, getCountFromServer,
 } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -574,6 +574,7 @@ const CreateSale = () => {
     deliveryType,
     deliveryDate: deliveryType === DELIVERY_TYPES.SCHEDULED ? deliveryDate : '',
     isDelivered: deliveryType === DELIVERY_TYPES.IMMEDIATE,
+    deliveryStatus: deliveryType === DELIVERY_TYPES.IMMEDIATE ? 'delivered' : 'pending',
     bulkPrice: bulkPrice || 0,
     notes,
   });
@@ -664,8 +665,31 @@ const CreateSale = () => {
 
         const saleData = buildSaleData(invoiceNumber, company);
 
+        // Preserve a completed scheduled delivery when an invoice is edited.
+        // Previously buildSaleData recalculated isDelivered only from
+        // deliveryType, which could turn a delivered scheduled sale back to
+        // false and make it reappear in Delivery Management later.
+        const existingDeliveryStatus = String(existingData.deliveryStatus || '').trim().toLowerCase();
+        const existingWasDelivered =
+          existingData.isDelivered === true ||
+          String(existingData.isDelivered).toLowerCase() === 'true' ||
+          existingDeliveryStatus === 'delivered' ||
+          existingDeliveryStatus === 'completed' ||
+          (Boolean(existingData.actualDeliveryDate) && existingDeliveryStatus !== 'pending');
+
+        if (deliveryType === DELIVERY_TYPES.SCHEDULED && existingData.deliveryType === DELIVERY_TYPES.SCHEDULED && existingWasDelivered) {
+          saleData.isDelivered = true;
+          saleData.deliveryStatus = 'delivered';
+        }
+
+        const deliveryFieldCleanup =
+          deliveryType === DELIVERY_TYPES.SCHEDULED && saleData.isDelivered
+            ? {}
+            : { actualDeliveryDate: deleteField() };
+
         await updateDoc(doc(db, 'sales', id), {
           ...saleData,
+          ...deliveryFieldCleanup,
           emiInstallments,
           ...paymentReset,
           updatedAt: serverTimestamp(),
