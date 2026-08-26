@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, IconButton,
@@ -10,7 +10,7 @@ import {
   DoneAll, CalendarMonth, ChevronLeft, ChevronRight,
 } from '@mui/icons-material';
 import {
-  collection, query, where, orderBy, limit, startAfter,
+  collection, query, where, orderBy, limit, startAfter, startAt, endAt,
   getDocs, updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,6 +21,77 @@ import { useMediaQuery, useTheme } from '@mui/material';
 
 const PAGE_SIZE = 10;
 const QUERY_SIZE = PAGE_SIZE + 1;
+const SEARCH_LIMIT = 20;
+const MIN_SEARCH_LENGTH = 2;
+
+const toTitleCase = (value = '') =>
+  value
+    .toLowerCase()
+    .replace(/(^|\s)\S/g, char => char.toUpperCase());
+
+// Firestore does not provide native full-text/substring search. For delivery
+// lookup we use bounded prefix queries against the existing indexed scalar
+// fields instead of downloading a month/collection and filtering in memory.
+// Each field query is capped and the merged result is capped at SEARCH_LIMIT.
+const searchPendingDeliveries = async (db, rawTerm) => {
+  const term = String(rawTerm || '').trim();
+  if (term.length < MIN_SEARCH_LENGTH) return [];
+
+  const searches = [];
+  const seenQueries = new Set();
+
+  const addPrefixSearch = (field, prefix) => {
+    const value = String(prefix || '').trim();
+    if (!value) return;
+    const key = `${field}:${value}`;
+    if (seenQueries.has(key)) return;
+    seenQueries.add(key);
+
+    searches.push(
+      getDocs(query(
+        collection(db, 'sales'),
+        orderBy(field),
+        startAt(value),
+        endAt(`${value}\uf8ff`),
+        limit(SEARCH_LIMIT),
+      ))
+    );
+  };
+
+  // Invoice numbers are generated in uppercase in this app. Customer names
+  // are normally saved in title case, while phones are searched as digits.
+  addPrefixSearch('invoiceNumber', term.toUpperCase());
+  addPrefixSearch('customerName', toTitleCase(term));
+
+  const phoneTerm = term.replace(/\D/g, '');
+  if (phoneTerm.length >= MIN_SEARCH_LENGTH) {
+    addPrefixSearch('customerPhone', phoneTerm);
+  }
+
+  const results = await Promise.allSettled(searches);
+  const merged = new Map();
+  let successfulQueryCount = 0;
+
+  results.forEach(result => {
+    if (result.status !== 'fulfilled') return;
+    successfulQueryCount += 1;
+    result.value.docs.forEach(snapshot => {
+      const sale = { id: snapshot.id, ...snapshot.data() };
+      if (isScheduledSale(sale) && !isSaleDelivered(sale)) {
+        merged.set(snapshot.id, sale);
+      }
+    });
+  });
+
+  if (searches.length > 0 && successfulQueryCount === 0) {
+    const firstError = results.find(result => result.status === 'rejected')?.reason;
+    throw firstError || new Error('Delivery search failed');
+  }
+
+  return Array.from(merged.values())
+    .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''))
+    .slice(0, SEARCH_LIMIT);
+};
 
 // Compatibility guard for old records. New records use boolean isDelivered as
 // the canonical queue field, while these checks ensure an older inconsistent
@@ -149,13 +220,18 @@ const PendingDeliveriesTab = ({ db }) => {
   const [hasNext, setHasNext] = useState(false);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [searchRows, setSearchRows] = useState([]);
   const [markDialog, setMarkDialog] = useState(null);
   const searchTimer = useRef(null);
 
   const handleSearch = (value) => {
     setSearch(value);
     clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => setDebouncedSearch(value), 300);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(value.trim());
+      setPage(0);
+      pageCursorsRef.current = [null];
+    }, 400);
   };
 
   const resetToFirstPage = () => {
@@ -164,8 +240,10 @@ const PendingDeliveriesTab = ({ db }) => {
     setRefreshKey(k => k + 1);
   };
 
+  useEffect(() => () => clearTimeout(searchTimer.current), []);
+
   useEffect(() => {
-    if (!db) return;
+    if (!db || debouncedSearch) return;
     let active = true;
 
     const load = async () => {
@@ -223,17 +301,41 @@ const PendingDeliveriesTab = ({ db }) => {
 
     load();
     return () => { active = false; };
-  }, [db, page, refreshKey]);
+  }, [db, page, refreshKey, debouncedSearch]);
 
-  const visibleRows = useMemo(() => {
-    const term = debouncedSearch.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter(d =>
-      (d.invoiceNumber || '').toLowerCase().includes(term) ||
-      (d.customerName || '').toLowerCase().includes(term) ||
-      (d.customerPhone || '').includes(term)
-    );
-  }, [rows, debouncedSearch]);
+  // Search mode is intentionally separate from normal pagination. It queries
+  // Firestore across the collection and returns at most SEARCH_LIMIT pending
+  // scheduled deliveries, rather than filtering only the 10 rows on screen.
+  useEffect(() => {
+    if (!db || !debouncedSearch) {
+      setSearchRows([]);
+      return;
+    }
+
+    let active = true;
+    const runSearch = async () => {
+      if (debouncedSearch.length < MIN_SEARCH_LENGTH) {
+        setSearchRows([]);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const matches = await searchPendingDeliveries(db, debouncedSearch);
+        if (active) setSearchRows(matches);
+      } catch (err) {
+        if (active) toast.error('Failed to search pending deliveries: ' + err.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    runSearch();
+    return () => { active = false; };
+  }, [db, debouncedSearch, refreshKey]);
+
+  const visibleRows = debouncedSearch ? searchRows : rows;
 
   const handleMarkDelivered = async (deliveredDate) => {
     if (!markDialog?.id) return;
@@ -257,7 +359,7 @@ const PendingDeliveriesTab = ({ db }) => {
     <Box>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 2 }}>
         <TextField
-          placeholder="Filter current page by invoice or customer..."
+          placeholder="Search all pending deliveries by invoice or customer..."
           value={search}
           onChange={e => handleSearch(e.target.value)}
           size="small"
@@ -306,7 +408,11 @@ const PendingDeliveriesTab = ({ db }) => {
                         <Box>
                           <DoneAll sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
                           <Typography color="text.secondary">
-                            {debouncedSearch ? 'No matching delivery on this page' : 'No pending deliveries on this page'}
+                            {debouncedSearch
+                              ? debouncedSearch.length < MIN_SEARCH_LENGTH
+                                ? `Type at least ${MIN_SEARCH_LENGTH} characters to search`
+                                : 'No matching pending deliveries found'
+                              : 'No pending deliveries on this page'}
                           </Typography>
                         </Box>
                       </TableCell>
@@ -378,13 +484,21 @@ const PendingDeliveriesTab = ({ db }) => {
           </Table>
         </TableContainer>
 
-        <PageControls
-          page={page}
-          hasNext={hasNext}
-          loading={loading}
-          onPrevious={() => setPage(p => Math.max(0, p - 1))}
-          onNext={() => hasNext && setPage(p => p + 1)}
-        />
+        {debouncedSearch ? (
+          <Box sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
+            <Typography variant="caption" color="text.secondary">
+              Showing up to {SEARCH_LIMIT} matches from the full sales collection
+            </Typography>
+          </Box>
+        ) : (
+          <PageControls
+            page={page}
+            hasNext={hasNext}
+            loading={loading}
+            onPrevious={() => setPage(p => Math.max(0, p - 1))}
+            onNext={() => hasNext && setPage(p => p + 1)}
+          />
+        )}
       </Card>
 
       <MarkDeliveredDialog
