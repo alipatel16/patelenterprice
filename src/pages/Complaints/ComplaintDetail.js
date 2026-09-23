@@ -39,6 +39,16 @@ const isOverdue = (expectedDate, status) => {
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
 
+const formatCustomerAddress = (complaint) => [
+  complaint?.customerAddress,
+  complaint?.customerCity,
+  complaint?.customerState,
+  complaint?.customerPincode,
+]
+  .map(part => (part || '').toString().trim())
+  .filter(Boolean)
+  .join(', ');
+
 // ─── Share Complaint ──────────────────────────────────────────────────────────
 const buildShareText = (complaint) => {
   const fmtD = d => {
@@ -54,6 +64,12 @@ const buildShareText = (complaint) => {
     ``,
     `👤 *Customer:* ${complaint.customerName}`,
     `📞 *Phone:* ${complaint.customerPhone || '—'}`,
+  ];
+
+  const customerAddress = formatCustomerAddress(complaint);
+  if (customerAddress) lines.push(`📍 *Address:* ${customerAddress}`);
+
+  lines.push(
     ``,
     `📝 *Title:* ${complaint.title}`,
     `🏷 *Category:* ${complaint.category || '—'}`,
@@ -67,7 +83,7 @@ const buildShareText = (complaint) => {
     `📌 *Status:* ${STATUS_CONFIG[complaint.status]?.label || complaint.status}`,
     `⏰ *Expected Resolution:* ${fmtD(complaint.expectedResolutionDate)}`,
     ``,
-  ];
+  );
 
   if (complaint.assigneeType === 'external') {
     lines.push(`🏢 *Assigned To (External):*`);
@@ -294,7 +310,32 @@ const ComplaintDetail = () => {
     try {
       const snap = await getDoc(doc(db, 'complaints', id));
       if (!snap.exists()) { toast.error('Complaint not found'); navigate('/complaints'); return; }
-      const c = { id: snap.id, ...snap.data() };
+      let c = { id: snap.id, ...snap.data() };
+
+      // Legacy complaints did not store a customer address snapshot. For those
+      // records only, resolve the current customer address on demand when the
+      // complaint is opened. This avoids any bulk migration/read cost.
+      const hasStoredAddress = Boolean(
+        c.customerAddress || c.customerCity || c.customerState || c.customerPincode
+      );
+      if (!hasStoredAddress && c.customerId) {
+        try {
+          const customerSnap = await getDoc(doc(db, 'customers', c.customerId));
+          if (customerSnap.exists()) {
+            const customerData = customerSnap.data();
+            c = {
+              ...c,
+              customerAddress: customerData.address || '',
+              customerCity: customerData.city || '',
+              customerState: customerData.state || '',
+              customerPincode: customerData.pincode || '',
+            };
+          }
+        } catch (customerError) {
+          console.warn('Could not load customer address for legacy complaint:', customerError);
+        }
+      }
+
       setComplaint(c);
 
       if (c.brandHierarchyId) {

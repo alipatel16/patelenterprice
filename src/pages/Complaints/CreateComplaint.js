@@ -130,9 +130,40 @@ const CreateComplaint = () => {
       if (!snap.exists()) { toast.error('Complaint not found'); navigate('/complaints'); return; }
       const d = snap.data();
 
-      setSelectedCustomer(d.customerId
-        ? { id: d.customerId, name: d.customerName, phone: d.customerPhone }
-        : null);
+      let existingCustomer = d.customerId
+        ? {
+            id: d.customerId,
+            name: d.customerName,
+            phone: d.customerPhone,
+            address: d.customerAddress || '',
+            city: d.customerCity || '',
+            state: d.customerState || '',
+            pincode: d.customerPincode || '',
+          }
+        : null;
+
+      // Backward compatibility for complaints created before customer address
+      // was snapshotted into the complaint document. Only read the customer
+      // when editing one of those older complaints.
+      if (existingCustomer && !existingCustomer.address && d.customerId) {
+        try {
+          const customerSnap = await getDoc(doc(db, 'customers', d.customerId));
+          if (customerSnap.exists()) {
+            const customerData = customerSnap.data();
+            existingCustomer = {
+              ...existingCustomer,
+              address: customerData.address || '',
+              city: customerData.city || '',
+              state: customerData.state || '',
+              pincode: customerData.pincode || '',
+            };
+          }
+        } catch (customerError) {
+          console.warn('Could not load customer address for legacy complaint:', customerError);
+        }
+      }
+
+      setSelectedCustomer(existingCustomer);
       setTitle(d.title || '');
       setCategory(d.category || '');
       setBrand(d.brand || '');
@@ -245,6 +276,12 @@ const CreateComplaint = () => {
         customerId: selectedCustomer.id,
         customerName: selectedCustomer.name,
         customerPhone: selectedCustomer.phone || '',
+        // Snapshot customer address on the complaint so future customer edits
+        // do not change the address that was recorded with this complaint.
+        customerAddress: selectedCustomer.address || '',
+        customerCity: selectedCustomer.city || '',
+        customerState: selectedCustomer.state || '',
+        customerPincode: selectedCustomer.pincode || '',
         title: title.trim(),
         category,
         brand: brand.trim(),
