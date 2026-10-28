@@ -53,3 +53,41 @@ it('requires migrated job-output readiness, then generates searchable output wit
   expect(searched.rows).toEqual([expect.objectContaining({ employeeName: 'Zoya Faraway', revenue: 1 })]);
   expect(searched.total).toBe(1);
 });
+
+it.each(['search', 'metric'])('hides populated custom ranking after remote revision change and same-page %s', async change => {
+  const React = require('react');
+  const { act } = React;
+  const { createRoot } = require('react-dom/client');
+  const usePagedCollection = require('../hooks/usePagedCollection').default;
+  const s = setup();
+  s.records.set('appSettings/dataAccessV2', { version: 2, readyCollections: ['reportJobRows'] });
+  const job = { jobId: 'j', asOfRevision: 7, complete: true, status: 'complete' };
+  s.records.set('reportJobRows/j_7_a', withSearchFields('reportJobRows', { jobId: 'j', asOfRevision: 7, employeeName: 'Zoya', revenue: 10, quantity: 1 }));
+  const host = document.createElement('div'), root = createRoot(host);
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  function View({ search, metric }) {
+    const result = usePagedCollection(s.db, 'reportJobRows', { search, sort: [[metric, 'desc']], filters: [['jobId', '==', 'j'], ['asOfRevision', '==', 7]], loadPage: (db, _, options) => fetchCustomReportPage(db, job, { cursor: options.cursor, search: options.search, metric }) });
+    return React.createElement('div', null, result.rows.map(row => row.employeeName), result.error?.message);
+  }
+  jest.useFakeTimers();
+  try {
+    await act(async () => root.render(React.createElement(View, { search: '', metric: 'revenue' })));
+    expect(host.textContent).toBe('Zoya');
+    s.records.set('reportState/version', { revision: 8 });
+    await act(async () => root.render(React.createElement(View, { search: change === 'search' ? 'zo' : '', metric: change === 'metric' ? 'quantity' : 'revenue' })));
+    expect(host.textContent).not.toContain('Zoya');
+    if (change === 'search') await act(async () => { jest.advanceTimersByTime(300); });
+    expect(host.textContent).toContain('changed');
+    expect(host.textContent).not.toContain('Zoya');
+  } finally { act(() => root.unmount()); jest.useRealTimers(); }
+});
+
+it('rejects a ranking page when the source revision changes during its query', async () => {
+  const s = setup();
+  s.records.set('appSettings/dataAccessV2', { version: 2, readyCollections: ['reportJobRows'] });
+  const job = { jobId: 'j', asOfRevision: 7, complete: true, status: 'complete' };
+  s.records.set('reportJobRows/j_7_a', withSearchFields('reportJobRows', { jobId: 'j', asOfRevision: 7, employeeName: 'Zoya', revenue: 10 }));
+  const originalGetDocs = getDocs.getMockImplementation();
+  getDocs.mockImplementation(async request => { const result = await originalGetDocs(request); s.records.set('reportState/version', { revision: 8 }); return result; });
+  await expect(fetchCustomReportPage(s.db, job)).rejects.toThrow(/changed/);
+});

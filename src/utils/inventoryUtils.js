@@ -1,4 +1,4 @@
-import { addRecord as addDoc, updateRecord as updateDoc } from '../data/writes';
+import { addRecord as addDoc, mutateRecord } from '../data/writes';
 /**
  * Inventory Delta Utilities
  *
@@ -86,22 +86,21 @@ export const applyInventoryDeltas = async (db, oldItems, newItems, type) => {
     }
 
     const invDoc = invSnap.docs[0];
-    const data   = invDoc.data();
 
     if (type === 'sale') {
       // More sold → less stock; fewer sold → more stock
-      await updateDoc(doc(db, 'inventory', invDoc.id), {
+      await mutateRecord(doc(db, 'inventory', invDoc.id), data => ({
         stock:   Math.max(0, (data.stock   || 0) - delta),
         soldQty: Math.max(0, (data.soldQty || 0) + delta),
         updatedAt: serverTimestamp(),
-      });
+      }));
     } else {
       // More purchased → more stock; fewer purchased → less stock
-      await updateDoc(doc(db, 'inventory', invDoc.id), {
+      await mutateRecord(doc(db, 'inventory', invDoc.id), data => ({
         stock:        Math.max(0, (data.stock        || 0) + delta),
         purchasedQty: Math.max(0, (data.purchasedQty || 0) + delta),
         updatedAt:    serverTimestamp(),
-      });
+      }));
     }
   }
 };

@@ -61,3 +61,18 @@ test('an explicitly supplied starting cursor is preserved by the query interface
   await render({ cursor });
   expect(fetchPage.mock.calls.at(-1)[2].cursor).toBe(cursor);
 });
+test.each(['search', 'metric'])('custom %s changes withhold old rows until source validation succeeds', async change => {
+  let revision = 7;
+  const loadPage = jest.fn(async () => {
+    if (revision !== 7) throw Error('Report changed');
+    return { rows: [{ id: '1', name: 'Saved ranking' }], total: 1, hasNext: false };
+  });
+  await render({ loadPage, sort: [['revenue', 'desc']] });
+  expect(host.textContent).toBe('Saved ranking');
+  revision = 8;
+  await render(change === 'search' ? { loadPage, search: 'sa', sort: [['revenue', 'desc']] } : { loadPage, sort: [['quantity', 'desc']] });
+  expect(host.textContent).toBe('');
+  if (change === 'search') await advance(300);
+  expect(host.textContent).toBe('');
+  expect(result.error.message).toBe('Report changed');
+});

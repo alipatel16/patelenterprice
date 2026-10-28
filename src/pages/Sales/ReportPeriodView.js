@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import usePagedCollection from '../../hooks/usePagedCollection';
 import QueryStatus from '../../components/QueryStatus';
 import { fetchReportTotals, mergeProductPage, periodQuery } from '../../data/reports';
-import { generateCustomReport, reportJobId, validateReportJob } from '../../data/reportJobs';
+import { generateCustomReport, reportJobId, validateReportJob, fetchCustomReportPage } from '../../data/reportJobs';
 import { getKnownDocument, subscribeInvalidation, invalidateCollections } from '../../data/query';
 import { projectionId } from '../../data/projections';
 import { getInventoryForProducts } from '../../utils/inventoryCache';
@@ -51,7 +51,10 @@ export default function ReportPeriodView({ dimension }) {
   const definition = periodQuery(dimension, { periodType: custom ? 'lifetime' : mode, periodKey, search, metric });
   const collectionName = custom ? 'reportJobRows' : definition.collectionName;
   const filters = custom ? [['jobId', '==', jobId], ['asOfRevision', '==', job?.asOfRevision ?? -1]] : definition.options.filters;
-  const ranking = usePagedCollection(allowed && (!custom || customReady) && !catalog ? db : null, collectionName, { ...definition.options, filters, requireReady: true });
+  const ranking = usePagedCollection(allowed && (!custom || customReady) && !catalog ? db : null, collectionName, { ...definition.options, filters, requireReady: true, ...(custom ? { loadPage: (database, _collection, pageOptions) => fetchCustomReportPage(database, job, { cursor: pageOptions.cursor, metric, search: pageOptions.search }) } : {}) });
+  useEffect(() => {
+    if (custom && ranking.error) { setJob(current => current ? { ...current, complete: false, status: 'invalidated' } : current); setTotals(null); }
+  }, [custom, ranking.error]);
   const products = usePagedCollection(allowed && !employee && catalog && (!custom || customReady) ? db : null, 'products', { search, sort: [['nameLower', 'asc']], pageSize: 15, requireReady: true });
   const result = catalog ? products : ranking;
 

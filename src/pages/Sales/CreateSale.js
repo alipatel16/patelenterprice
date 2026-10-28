@@ -1,5 +1,6 @@
 import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
-import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { addRecord as addDoc, mutateRecord } from '../../data/writes';
+import { saveSaleEdit } from '../../data/saleEdit';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, Divider, Chip, FormControlLabel, Checkbox, Radio, RadioGroup, Alert, CircularProgress, Paper, IconButton, Stack, InputAdornment, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import {
@@ -300,6 +301,7 @@ const CreateSale = () => {
   const [deliveryDate, setDeliveryDate] = useState('');
 
   const dataLoadedRef = useRef(false);
+  const loadedSaleRef = useRef(null);
   const allCompanies = Object.values(COMPANIES);
 
   useEffect(() => {
@@ -315,6 +317,7 @@ const CreateSale = () => {
       const snap = await getDoc(doc(db, 'sales', id));
       if (!snap.exists()) { toast.error('Sale not found'); navigate('/sales'); return; }
       const d = snap.data();
+      loadedSaleRef.current = d;
       setInvoiceType(d.invoiceType || 'gst');
       setCompanyId(d.companyId || '');
       setSelectedCustomer(d.customerId ? { id: d.customerId, name: d.customerName, phone: d.customerPhone } : null);
@@ -645,7 +648,7 @@ const CreateSale = () => {
             ? {}
             : { actualDeliveryDate: deleteField() };
 
-        await updateDoc(doc(db, 'sales', id), {
+        await saveSaleEdit(mutateRecord, doc(db, 'sales', id), loadedSaleRef.current, {
           ...saleData,
           ...deliveryFieldCleanup,
           emiInstallments,

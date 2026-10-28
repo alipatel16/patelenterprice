@@ -3,7 +3,7 @@ import { fetchPage, queryKey, subscribeInvalidation, invalidateCollections } fro
 import { normalizeSearch, searchState } from '../data/search';
 
 export function usePagedCollection(db, collectionName, options = {}) {
-  const { search = '', filters = [], sort = [['createdAt', 'desc']], pageSize = 15, includeTotal = true, requireReady = false, cursor = null } = options;
+  const { search = '', filters = [], sort = [['createdAt', 'desc']], pageSize = 15, includeTotal = true, requireReady = false, cursor = null, loadPage = fetchPage } = options;
   const term = normalizeSearch(search);
   const cursorIdentity = cursor ? { id: cursor.id, path: cursor.ref?.path, values: sort.map(([field]) => cursor.get ? cursor.get(field) : cursor.data?.()?.[field]) } : null;
   const key = queryKey({ term, filters, sort, pageSize, includeTotal, requireReady, cursorIdentity });
@@ -40,7 +40,7 @@ export function usePagedCollection(db, collectionName, options = {}) {
     setState({ rows: [], total: null, loading: true, error: null, page: currentPage, hasNext: false });
     const load = async () => {
       try {
-        const result = await fetchPage(db, collectionName, { search: term, filters, sort, pageSize, includeTotal, requireReady, cursor: cursors.current[currentPage] });
+        const result = await loadPage(db, collectionName, { search: term, filters, sort, pageSize, includeTotal, requireReady, cursor: cursors.current[currentPage] });
         if (token !== generation.current) return;
         visited.current.add(currentPage);
         if (result.hasNext && result.lastDoc) cursors.current[currentPage + 1] = result.lastDoc;
