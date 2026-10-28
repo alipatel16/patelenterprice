@@ -1,46 +1,30 @@
-// src/pages/Dashboard/Dashboard.js
-//
-// ─── READ-COUNT FIXES (v2) ────────────────────────────────────────────────────
-//
-//  v1: Merged 9 queries → max 2 getDocs per load.
-//  v2: NO auto-load on mount. Data only fetches when the user clicks
-//      "Load Stats". After the first load, changing the date range
-//      still triggers a re-fetch automatically (via hasFetchedRef guard).
-//
-//  Why: Every dashboard visit by every user was burning reads even when
-//  users just opened the app and navigated away. Now reads only happen
-//  when intentionally requested.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Box, Grid, Card, CardContent, Typography, Button, Chip,
-  ToggleButton, ToggleButtonGroup, Skeleton, Avatar, Divider,
+  Box, Grid, Card, CardContent, Typography, Button, Alert,
+  ToggleButton, ToggleButtonGroup, Skeleton, Avatar,
   useTheme, TextField, CircularProgress,
 } from '@mui/material';
 import {
-  TrendingUp, People, Inventory2, PointOfSale,
+  TrendingUp, People, Inventory2,
   ShoppingCart, Add, ArrowUpward, ArrowDownward,
-  AttachMoney, Pending, LocalShipping, Receipt,
-  BarChart as BarChartIcon, Refresh,
+  AttachMoney, Pending, Receipt,
+  BarChart as BarChartIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import {
-  collection, query, where, getDocs,
-  Timestamp, getCountFromServer,
-} from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency } from '../../utils';
-import dayjs from 'dayjs';
+import { dashboardDate, loadDashboard } from '../../data/dashboard';
+import { invalidateCollections, subscribeInvalidation } from '../../data/query';
+
+const DASHBOARD_COLLECTIONS = ['sales', 'customers', 'products', 'purchases'];
 
 // ─── StatCard ─────────────────────────────────────────────────────────────────
 
 const StatCard = ({ title, value, subtitle, icon, color, trend, loading }) => {
-  const theme = useTheme();
   return (
     <Card>
       <CardContent>
@@ -97,136 +81,80 @@ const QuickAction = ({ label, icon, color, onClick }) => (
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const Dashboard = () => {
-  const { db, userProfile, storeType } = useAuth();
+  const { db, user, userProfile, storeType } = useAuth();
   const navigate = useNavigate();
   const theme = useTheme();
 
-  // ── Filter state ────────────────────────────────────────────────────────────
-  const [range,       setRange]       = useState('monthly');
-  const [customStart, setCustomStart] = useState(dayjs().subtract(7, 'day').format('YYYY-MM-DD'));
-  const [customEnd,   setCustomEnd]   = useState(dayjs().format('YYYY-MM-DD'));
+  const [range, setRange] = useState('daily');
+  const [customStart, setCustomStart] = useState(() => dashboardDate(new Date(), -7));
+  const [customEnd, setCustomEnd] = useState(() => dashboardDate());
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const revision = useRef(0);
+  const hasLoaded = result !== null;
+  const stats = result?.stats;
+  const chartData = result?.chartData || [];
 
-  // ── Data state ──────────────────────────────────────────────────────────────
-  const [loading,   setLoading]   = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);   // true after first manual load
-  const [stats, setStats] = useState({
-    totalSales: 0, totalCustomers: 0, totalProducts: 0,
-    totalPurchases: 0, pendingSales: 0, todaySales: 0,
-    invoiceCount: 0,
-  });
-  const [chartData, setChartData] = useState([]);
-
-  // Ref tracks whether user has triggered at least one load.
-  // Used in the useEffect to gate auto-refetch on range changes.
-  // Ref (not state) avoids stale-closure issues in the effect.
-  const hasFetchedRef = useRef(false);
-
-  // ── Auto-refetch when range/dates change — but ONLY after first manual load ─
+  // A filter edit clears the previous result; only Load starts a request.
   useEffect(() => {
-    if (!db || !hasFetchedRef.current) return;
-    fetchAllData();
-  }, [db, range, customStart, customEnd]);
+    revision.current++;
+    setResult(null); setError(null); setLoading(false);
+  }, [range, customStart, customEnd]);
 
-  // ── Date range helper ───────────────────────────────────────────────────────
-  const getDateRange = () => {
-    const now = dayjs();
-    if (range === 'daily')   return { start: now.startOf('day'),   end: now.endOf('day')   };
-    if (range === 'monthly') return { start: now.startOf('month'), end: now.endOf('month') };
-    if (range === 'custom')  return { start: dayjs(customStart),   end: dayjs(customEnd)   };
-    return { start: now.startOf('month'), end: now.endOf('month') };
-  };
+  useEffect(() => {
+    revision.current++;
+    setRange('daily'); setResult(null); setError(null); setLoading(false);
+    return () => { revision.current++; };
+  }, [db, storeType, user?.uid, userProfile?.role]);
 
-  // ── Fetch — max 2 getDocs ───────────────────────────────────────────────────
+  useEffect(() => subscribeInvalidation(db, names => {
+    if (names && !names.some(name => DASHBOARD_COLLECTIONS.includes(name))) return;
+    revision.current++;
+    setResult(null); setError(null); setLoading(false);
+    if (!names) setRange('daily');
+  }), [db]);
+
+  // Today and the seven-day chart become stale at India midnight, even if
+  // the browser is suspended. Expire the display without issuing any reads.
+  useEffect(() => {
+    let displayedDay = dashboardDate();
+    let timer;
+    const checkDay = () => {
+      const today = dashboardDate();
+      if (today !== displayedDay) {
+        displayedDay = today;
+        revision.current++;
+        setResult(null); setError(null); setLoading(false);
+      }
+      clearTimeout(timer);
+      const nextMidnight = new Date(`${today}T00:00:00+05:30`).getTime() + 86400000;
+      timer = setTimeout(checkDay, Math.max(1, nextMidnight - Date.now()));
+    };
+    checkDay();
+    window.addEventListener('focus', checkDay);
+    document.addEventListener('visibilitychange', checkDay);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', checkDay);
+      document.removeEventListener('visibilitychange', checkDay);
+    };
+  }, [db]);
+
   const fetchAllData = async () => {
     if (!db) return;
-    hasFetchedRef.current = true;
-    setHasLoaded(true);
-    setLoading(true);
+    // An explicit refresh bypasses the shared 60-second cache, while the
+    // selected day and matching chart bucket still share the same aggregates.
+    invalidateCollections(db, DASHBOARD_COLLECTIONS);
+    const request = ++revision.current;
+    setLoading(true); setError(null);
     try {
-      const today     = dayjs();
-      const { start, end } = getDateRange();
-      const startTs   = Timestamp.fromDate(start.toDate());
-      const endTs     = Timestamp.fromDate(end.toDate());
-
-      const chartStart   = today.subtract(6, 'day').startOf('day');
-      const chartEnd     = today.endOf('day');
-      const chartStartTs = Timestamp.fromDate(chartStart.toDate());
-      const chartEndTs   = Timestamp.fromDate(chartEnd.toDate());
-
-      // Count queries (cheap — ~1 read each regardless of collection size)
-      const [custSnap, prodSnap, purchaseSnap, pendingSnap] = await Promise.all([
-        getCountFromServer(collection(db, 'customers')),
-        getCountFromServer(collection(db, 'products')),
-        getCountFromServer(collection(db, 'purchases')),
-        getCountFromServer(query(collection(db, 'sales'), where('paymentType', '==', 'pending_payment'))),
-      ]);
-
-      // Stats query (1 getDocs — reads docs in selected range)
-      const salesSnap = await getDocs(query(
-        collection(db, 'sales'),
-        where('createdAt', '>=', startTs),
-        where('createdAt', '<=', endTs),
-      ));
-
-      // Chart query — reuse salesSnap if 7-day window is within the stats range
-      const chartIsInStatsRange =
-        chartStart.valueOf() >= start.valueOf() &&
-        chartEnd.valueOf()   <= end.valueOf();
-
-      let chartDocs;
-      if (chartIsInStatsRange) {
-        chartDocs = salesSnap.docs;
-      } else {
-        const chartSnap = await getDocs(query(
-          collection(db, 'sales'),
-          where('createdAt', '>=', chartStartTs),
-          where('createdAt', '<=', chartEndTs),
-        ));
-        chartDocs = chartSnap.docs;
-      }
-
-      const totalSales   = salesSnap.docs.reduce((s, d) => s + (d.data().grandTotal || 0), 0);
-      const invoiceCount = salesSnap.size;
-
-      const todayKey   = today.format('YYYY-MM-DD');
-      const todaySales = chartDocs
-        .filter(d => {
-          const ts = d.data().createdAt;
-          return ts && dayjs(ts.toDate()).format('YYYY-MM-DD') === todayKey;
-        })
-        .reduce((s, d) => s + (d.data().grandTotal || 0), 0);
-
-      setStats({
-        totalSales,
-        invoiceCount,
-        totalCustomers:  custSnap.data().count,
-        totalProducts:   prodSnap.data().count,
-        totalPurchases:  purchaseSnap.data().count,
-        pendingSales:    pendingSnap.data().count,
-        todaySales,
-      });
-
-      // Build 7-day chart
-      const dayMap = {};
-      for (let i = 6; i >= 0; i--) {
-        const d = today.subtract(i, 'day');
-        dayMap[d.format('YYYY-MM-DD')] = { day: d.format('DD MMM'), sales: 0, count: 0 };
-      }
-      chartDocs.forEach(doc => {
-        const data = doc.data();
-        if (!data.createdAt) return;
-        const key = dayjs(data.createdAt.toDate()).format('YYYY-MM-DD');
-        if (dayMap[key]) {
-          dayMap[key].sales += data.grandTotal || 0;
-          dayMap[key].count += 1;
-        }
-      });
-      setChartData(Object.values(dayMap));
-
-    } catch (err) {
-      console.error('[Dashboard] fetchAllData error:', err);
+      const next = await loadDashboard(db, { range, start: customStart, end: customEnd });
+      if (request === revision.current) setResult(next);
+    } catch (failure) {
+      if (request === revision.current) setError(failure.message || 'Dashboard could not load. Please try again.');
     } finally {
-      setLoading(false);
+      if (request === revision.current) setLoading(false);
     }
   };
 
@@ -252,6 +180,45 @@ const Dashboard = () => {
         </Button>
       </Box>
 
+      {/* Date range filter */}
+      <Box display="flex" alignItems="center" gap={2} mb={3} flexWrap="wrap">
+        <ToggleButtonGroup value={range} exclusive onChange={(_, v) => v && setRange(v)} size="small">
+          <ToggleButton value="daily">Today</ToggleButton>
+          <ToggleButton value="monthly">This Month</ToggleButton>
+          <ToggleButton value="custom">Custom</ToggleButton>
+        </ToggleButtonGroup>
+        {range === 'custom' && (
+          <>
+            <TextField
+              type="date" size="small" value={customStart}
+              onChange={e => setCustomStart(e.target.value)}
+              label="From" InputLabelProps={{ shrink: true }} sx={{ width: 150 }}
+            />
+            <TextField
+              type="date" size="small" value={customEnd}
+              onChange={e => setCustomEnd(e.target.value)}
+              label="To" InputLabelProps={{ shrink: true }} sx={{ width: 150 }}
+            />
+          </>
+        )}
+        <Button
+          size="small" variant="outlined" startIcon={loading ? <CircularProgress size={14} /> : <BarChartIcon />}
+          onClick={fetchAllData} disabled={loading || !db}
+          sx={{ ml: 'auto' }}
+        >
+          {loading ? 'Loading…' : 'Load Dashboard Stats'}
+        </Button>
+      </Box>
+
+      {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+      {result && (
+        <Typography variant="caption" color="text.secondary" display="block" mb={2}>
+          Last refreshed: {new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
+          }).format(result.refreshedAt)} IST
+        </Typography>
+      )}
+
       {/* ── IDLE STATE — before first load ── */}
       {!hasLoaded && (
         <Grid container spacing={2}>
@@ -274,17 +241,8 @@ const Dashboard = () => {
               </Typography>
               <Typography variant="body2" color="text.secondary" mb={3} sx={{ maxWidth: 360, mx: 'auto' }}>
                 Stats and charts are loaded on demand to save Firestore reads.
-                Click below to load the current period data.
+                Use Load Dashboard Stats above to load the selected period.
               </Typography>
-              <Button
-                variant="contained"
-                size="large"
-                startIcon={<BarChartIcon />}
-                onClick={fetchAllData}
-                sx={{ px: 4, py: 1.5, borderRadius: 2, fontWeight: 700 }}
-              >
-                Load Dashboard Stats
-              </Button>
             </Card>
           </Grid>
 
@@ -315,36 +273,6 @@ const Dashboard = () => {
       {/* ── LOADED STATE — after first load ── */}
       {hasLoaded && (
         <>
-          {/* Date range filter */}
-          <Box display="flex" alignItems="center" gap={2} mb={3} flexWrap="wrap">
-            <ToggleButtonGroup value={range} exclusive onChange={(_, v) => v && setRange(v)} size="small">
-              <ToggleButton value="daily">Today</ToggleButton>
-              <ToggleButton value="monthly">This Month</ToggleButton>
-              <ToggleButton value="custom">Custom</ToggleButton>
-            </ToggleButtonGroup>
-            {range === 'custom' && (
-              <>
-                <TextField
-                  type="date" size="small" value={customStart}
-                  onChange={e => setCustomStart(e.target.value)}
-                  label="From" InputLabelProps={{ shrink: true }} sx={{ width: 150 }}
-                />
-                <TextField
-                  type="date" size="small" value={customEnd}
-                  onChange={e => setCustomEnd(e.target.value)}
-                  label="To" InputLabelProps={{ shrink: true }} sx={{ width: 150 }}
-                />
-              </>
-            )}
-            <Button
-              size="small" variant="outlined" startIcon={loading ? <CircularProgress size={14} /> : <Refresh />}
-              onClick={fetchAllData} disabled={loading}
-              sx={{ ml: 'auto' }}
-            >
-              {loading ? 'Loading…' : 'Refresh'}
-            </Button>
-          </Box>
-
           {/* Stat cards */}
           <Grid container spacing={2} mb={3}>
             <Grid item xs={12} sm={6} md={4}>
