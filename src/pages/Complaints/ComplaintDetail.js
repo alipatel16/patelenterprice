@@ -3,9 +3,7 @@ import {
   Box, Typography, Button, Card, CardContent, Grid, Chip, Divider,
   IconButton, Alert, CircularProgress, Stack, Paper, TextField,
   Dialog, DialogTitle, DialogContent, DialogActions, MenuItem,
-  Select, FormControl, InputLabel, Tab, Tabs, Timeline,
-  TimelineItem, TimelineSeparator, TimelineConnector, TimelineContent,
-  TimelineDot, TimelineOppositeContent,
+  Select, FormControl, InputLabel, Tab, Tabs,
 } from '@mui/material';
 import {
   ArrowBack, Edit, BugReport, AccountTree, Warning,
