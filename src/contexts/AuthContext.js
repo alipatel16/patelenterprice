@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { setRecord as setDoc } from '../data/writes';
 import { getAuthByStore, getDbByStore } from '../firebase/config';
 import { getKnownDocument, setDataAccessScope } from '../data/query';
 

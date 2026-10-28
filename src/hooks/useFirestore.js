@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { fetchPage, getKnownDocument, invalidateCollections } from '../data/query';
-import { withSearchFields } from '../data/search';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
+import { fetchPage, getKnownDocument } from '../data/query';
+import { addRecord, updateRecord, deleteRecord } from '../data/writes';
 
 /** Compatibility adapter. New screens should use usePagedCollection directly. */
 export const useFirestoreCollection = (db, collectionName) => {
@@ -21,21 +21,16 @@ export const useFirestoreCollection = (db, collectionName) => {
   }, [db, collectionName, lastDoc]);
   const add = useCallback(async payload => {
     if (!db) return;
-    const ref = await addDoc(collection(db, collectionName), { ...withSearchFields(collectionName, payload), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    invalidateCollections(db, [collectionName]); return ref.id;
+    const ref = await addRecord(collection(db, collectionName), { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    return ref.id;
   }, [db, collectionName]);
   const update = useCallback(async (id, payload) => {
     if (!db) return;
-    const current = await getKnownDocument(db, collectionName, id, { ttlMs: 0 });
-    const normalized = withSearchFields(collectionName, { ...current, ...payload });
-    await updateDoc(doc(db, collectionName, id), { ...payload, nameLower: normalized.nameLower,
-      searchTokens: normalized.searchTokens, searchVersion: normalized.searchVersion,
-      ...(normalized.makerLower !== undefined ? { makerLower: normalized.makerLower } : {}), updatedAt: serverTimestamp() });
-    invalidateCollections(db, [collectionName]);
+    await updateRecord(doc(db, collectionName, id), { ...payload, updatedAt: serverTimestamp() });
   }, [db, collectionName]);
   const remove = useCallback(async id => {
     if (!db) return;
-    await deleteDoc(doc(db, collectionName, id)); invalidateCollections(db, [collectionName]);
+    await deleteRecord(doc(db, collectionName, id));
   }, [db, collectionName]);
   const getById = useCallback(id => db ? getKnownDocument(db, collectionName, id) : Promise.resolve(null), [db, collectionName]);
   /** @deprecated Unbounded scans are prohibited. Page with fetchAdministrativePage. */
