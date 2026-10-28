@@ -13,6 +13,9 @@ const copy = value => Array.isArray(value) ? value.map(copy) : plain(value)
 const fail = (message, code = 'data-access/reconciliation-required') => { const error = new Error(message); error.code = code; throw error; };
 const isDelete = value => value instanceof FieldValue && value.isEqual(deleteField());
 const isTimestamp = value => value instanceof FieldValue && value.isEqual(serverTimestamp());
+let fallbackWriteSequence = 0;
+const newWriteToken = () => globalThis.crypto?.randomUUID?.() ||
+  `${Date.now().toString(36)}-${(++fallbackWriteSequence).toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 function materialize(value, current, merge = false, inArray = false) {
   if (isDelete(value)) {
@@ -135,6 +138,9 @@ export function createWriteAdapters(driver = { doc, runTransaction }) {
       fail('operationId must be a nonempty string of at most 200 characters', 'data-access/invalid-operation');
     const deletionRef = driver.doc(db, '_deletionOps', encodeURIComponent(reference.path));
     const operationRef = options.operationId ? driver.doc(db, '_writeOps', encodeURIComponent(JSON.stringify([reference.path, options.operationId]))) : null;
+    // One action identity survives every SDK retry of this callback. It is not a
+    // secret; freshness distinguishes adapters from stale partial-update clients.
+    const writeToken = newWriteToken();
     const outcome = await driver.runTransaction(db, async transaction => {
       const sourceSnap = await transaction.get(reference);
       const tombstone = await transaction.get(deletionRef);
@@ -162,7 +168,7 @@ export function createWriteAdapters(driver = { doc, runTransaction }) {
         if (collection === 'sales') next = { ...next, ...deriveSaleState(next) };
         if (collection === 'complaints') next = { ...next, ...deriveComplaintState(next) };
         next = withSearchFields(collection, { ...next, _writeRevision: revision, _projectionVersion: PROJECTION_VERSION,
-          _deleteMarkerId: deletionRef.id });
+          _deleteMarkerId: deletionRef.id, _writeToken: writeToken });
       }
       const projectedPrevious = previous?._projectionVersion === PROJECTION_VERSION ? previous : null;
       const reportChanges = collection === 'sales' ? diffRows(buildReportContributions(id, projectedPrevious), buildReportContributions(id, next)) : [];
@@ -185,7 +191,7 @@ export function createWriteAdapters(driver = { doc, runTransaction }) {
         writes.push({ ref, data: { schemaVersion: PROJECTION_VERSION, revision: (snap.exists() ? snap.data().revision || 0 : 0) + 1 } });
       }
       if (deleting) writes.push({ ref: deletionRef, data: { schemaVersion: PROJECTION_VERSION, sourcePath: reference.path,
-        previousRevision: priorRevision, revision, operationId: options.operationId || null } });
+        previousRevision: priorRevision, revision, operationId: options.operationId || null, _writeToken: writeToken } });
       if (operationRef) writes.push({ ref: operationRef, data: { schemaVersion: PROJECTION_VERSION, sourcePath: reference.path,
         operationId: options.operationId, revision, kind: deleting ? 'delete' : 'update' } });
       assertBudget(writes);

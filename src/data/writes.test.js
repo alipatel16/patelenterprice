@@ -7,6 +7,7 @@ function memoryStore() {
   const db = {}, records = new Map(), versions = new Map();
   let retries = 0, nextId = 0;
   const reads = [];
+  const attemptWrites = [];
   const reference = path => ({ path, id: path.split('/').at(-1), firestore: db,
     parent: { id: path.split('/').at(-2) } });
   const driver = { doc: (first, ...parts) => reference(parts.length ? parts.join('/') : `${first.path}/auto${++nextId}`),
@@ -25,6 +26,7 @@ function memoryStore() {
           delete: ref => pending.push([ref.path, undefined]),
         };
         const result = await callback(transaction);
+        attemptWrites.push(pending);
         if ([...readVersions].some(([path, version]) => (versions.get(path) || 0) !== version)) { retries++; continue; }
         for (const [path, data] of pending) {
           if (data === undefined) records.delete(path); else records.set(path, data);
@@ -35,7 +37,7 @@ function memoryStore() {
       throw Error('Retry limit');
     },
   };
-  return { db, reference, records, driver, reads, get retries() { return retries; } };
+  return { db, reference, records, driver, reads, attemptWrites, get retries() { return retries; } };
 }
 const clone = value => {
   if (value === null || typeof value !== 'object' || value.isEqual) return value;
@@ -264,4 +266,50 @@ it('recomputes the source employee report key when salesperson identity changes'
   expect(store.records.get(ref.path).reportEmployeeKey).toBe('legacy:ali patel');
   await writes.updateRecord(ref, { salesperson: '' });
   expect(store.records.get(ref.path).reportEmployeeKey).toBe('legacy:unmatched');
+});
+
+it('recomputes fresh source and deletion tokens for separate actions despite caller overrides', async () => {
+  const { store, writes } = setup(), ref = store.reference('customers/c1');
+  await writes.setRecord(ref, { name: 'First', _writeToken: 'caller-stale' });
+  const first = store.records.get(ref.path)._writeToken;
+  expect(typeof first).toBe('string');
+  expect(first.length).toBeGreaterThan(0);
+  expect(first).not.toBe('caller-stale');
+  await writes.updateRecord(ref, { name: 'Second' });
+  const second = store.records.get(ref.path)._writeToken;
+  expect(second).not.toBe(first);
+  await writes.setRecord(ref, { name: 'Third', _writeToken: first }, { merge: true });
+  const third = store.records.get(ref.path)._writeToken;
+  expect([first, second]).not.toContain(third);
+  await writes.deleteRecord(ref);
+  const marker = store.records.get('_deletionOps/customers%2Fc1');
+  expect(typeof marker._writeToken).toBe('string');
+  expect(marker._writeToken.length).toBeGreaterThan(0);
+  expect([first, second, third]).not.toContain(marker._writeToken);
+  expect(marker).not.toHaveProperty('name');
+});
+
+it('reuses each invocation token across transaction retries and leaves operation replay unchanged', async () => {
+  const { store, writes, ref } = setup();
+  await writes.setRecord(ref, fixture);
+  const initial = store.records.get(ref.path)._writeToken;
+  await Promise.all(['token-a', 'token-b'].map(operationId => writes.mutateRecord(ref,
+    current => ({ notes: operationId, _writeToken: current._writeToken || 'caller-stale' }), { operationId })));
+  expect(store.retries).toBeGreaterThan(0);
+  const tokens = ['token-a', 'token-b'].map(operationId => {
+    const attempts = store.attemptWrites.filter(writes => writes.some(([path, data]) => path.startsWith('_writeOps/') && data.operationId === operationId));
+    expect(attempts.length).toBeGreaterThan(0);
+    const seen = new Set(attempts.map(writes => writes.find(([path]) => path === ref.path)[1]._writeToken));
+    expect(seen.size).toBe(1);
+    const token = [...seen][0];
+    expect(typeof token).toBe('string');
+    expect(token).not.toBe(initial);
+    return token;
+  });
+  expect(new Set(tokens).size).toBe(2);
+  const beforeReplay = clone(store.records.get(ref.path));
+  const replay = await writes.mutateRecord(ref, () => ({ notes: 'must not apply' }), { operationId: 'token-a' });
+  expect(replay.applied).toBe(false);
+  expect(store.records.get(ref.path)).toEqual(beforeReplay);
+  expect(store.attemptWrites.at(-1)).toEqual([]);
 });

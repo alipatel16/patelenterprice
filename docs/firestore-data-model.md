@@ -26,6 +26,7 @@ is the revision at which that operation originally applied.
 
 Source writes recompute `searchTokens`, `searchVersion: 2`, `nameLower`, optional
 `makerLower`, `_writeRevision` (monotonically increasing), `_projectionVersion: 2`,
+`_writeToken` (opaque identity for one write action),
 and `_deleteMarkerId` (the exact `encodeURIComponent(documentRef.path)` marker ID).
 Firebase `deleteField()` is materialized before projection; `serverTimestamp()` is
 accepted outside arrays. Arithmetic/array transforms must use a mutator. Nested
@@ -68,14 +69,22 @@ use deterministic IDs and can be replaced/deleted without additive subtraction.
 | `needsReconciliation` | Any issue exists |
 
 Paid full-payment records retain paid meaning even when legacy `totalPaidAmount` is
-zero. EMI balance uses installment amounts minus paid amounts (history sum only if
-`paidAmount` is absent), clamped at zero and rounded to cents. Down payment is
+zero. EMI balance uses installment amounts minus paid amounts (effective history sum
+only if `paidAmount` is absent), clamped at zero and rounded to cents. An optional
+installment `paidAmountBaseline` preserves a nonnegative legacy scalar paid amount
+when the first new receipt is appended to an empty history. The effective paid
+history is this baseline (default zero) plus actual receipt amounts; projection
+validates this total against `paidAmount`. Invalid baselines require financial
+reconciliation. Payment actions add a baseline only when the prior scalar
+`paidAmount > 0` and there is no existing receipt history. Subsequent actions retain
+it; existing mismatched histories do not infer a baseline. No historical receipt
+is fabricated, and no original paid total is rewritten by derivation. Down payment is
 compared to stored totals but is never double counted in the queue balance.
 Principal mismatches do not hide unpaid dues or rewrite amounts.
 
 Warnings include `invalid-grand-total`, `invalid-down-payment`, `invalid-paid-total`,
 `missing-emi-schedule`, `emi-principal-mismatch`, `emi-paid-total-mismatch`, and
-`installment-N-` followed by `invalid-amount`, `invalid-paid-amount`,
+`installment-N-` followed by `invalid-amount`, `invalid-paid-amount`, `invalid-paid-baseline`,
 `invalid-payment-history`, `payment-history-mismatch`, `overpaid`, or
 `paid-status-mismatch`. Date issues are `invalid-sale-date` and
 `installment-N-invalid-due-date`. Duplicate/missing positive integer installment
@@ -163,7 +172,8 @@ Missing/empty expected dates have `complaintDateIssues: []`; malformed nonempty
 values add `invalid-expected-resolution-date`. Source dates are preserved.
 
 `_deletionOps/{encodeURIComponent(sourcePath)}` stores `schemaVersion: 2`,
-`sourcePath`, `previousRevision`, `revision`, `operationId` (or `null`). A recreated
+`sourcePath`, `previousRevision`, `revision`, `operationId` (or `null`), and
+`_writeToken` (the current deletion action's fresh token). A recreated
 source advances beyond the retained deletion revision. Markers are not deleted.
 Every nondeleted source written by these adapters carries `_deleteMarkerId`, even
 when its source ID contains non-ASCII characters, spaces, or literal percent signs.
@@ -173,6 +183,24 @@ Rules can read `_deletionOps/$(resource.data._deleteMarkerId)` with `getAfter`
 to require a compatible atomic delete marker without reimplementing URI/UTF-8
 encoding. Migration must populate this additive source field before enabling that
 guard for legacy records. The marker ID equals the adapter's actual deletion path.
+
+`_writeToken` is generated once per adapter invocation before the transaction
+callback and reused across all SDK retries of that invocation. A separate accepted
+action receives a new token; caller payloads cannot retain or override an old token.
+The source and deletion marker always receive the adapter-generated value where
+written. Tokens use `crypto.randomUUID()` when available, with a timestamp/sequence/
+random fallback. They are action identifiers, not secrets, receipt identifiers or
+financial data. An already-applied operation ID returns before writes and leaves
+the current source token unchanged.
+
+The compatible write protocol uses fresh token/schema checks in rules while
+Firestore transaction preconditions handle concurrent source changes and retries.
+Requiring the candidate revision to be exactly the currently stored revision plus
+one inside rules can deny a valid stale transaction attempt before its precondition
+conflict is retried. Adapters still compute monotonically increasing revisions
+from each retry's fresh source; rules and real-SDK concurrency checks are maintained
+separately from this adapter.
+
 `_writeOps/{encodeURIComponent(JSON.stringify([sourcePath, operationId]))}` stores
 `schemaVersion: 2`, `sourcePath`, `operationId`, `revision`, `kind` (`update` or
 `delete`) to prevent replay. Do not expire these while a caller may replay an ID.
