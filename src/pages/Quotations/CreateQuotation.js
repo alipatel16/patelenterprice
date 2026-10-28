@@ -1,18 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  MenuItem, Select, FormControl, InputLabel, Divider, Chip,
-  Alert, Autocomplete, CircularProgress, IconButton, Stack,
-  Dialog, DialogTitle, DialogContent, DialogActions,
-} from '@mui/material';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { useState, useEffect, useRef } from 'react';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, Divider, Chip, Alert, CircularProgress, IconButton, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import {
   ArrowBack, Save, Delete, AddCircle, PersonAdd,
   Receipt, ReceiptLong, Description,
 } from '@mui/icons-material';
-import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp, getDoc, getCountFromServer,
-} from 'firebase/firestore';
+import { collection, doc, serverTimestamp, getCountFromServer } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -100,9 +94,6 @@ const CreateQuotation = () => {
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
   const [notes, setNotes] = useState('');
 
-  // customers/products kept for commented-out Autocomplete references below
-  const [customers, setCustomers] = useState([]);
-  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -119,17 +110,6 @@ const CreateQuotation = () => {
     else dataLoadedRef.current = true;
     // eslint-disable-next-line
   }, [db]);
-
-  // FIX: loadLookups removed entirely — was fetching ALL customers + products on
-  // every form mount. FirestoreAutocomplete handles search on-demand instead.
-  // const loadLookups = async () => {
-  //   const [custSnap, prodSnap] = await Promise.all([
-  //     getDocs(query(collection(db, 'customers'), orderBy('name'))),
-  //     getDocs(query(collection(db, 'products'), orderBy('name'))),
-  //   ]);
-  //   setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-  //   setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-  // };
 
   const loadExistingQuotation = async () => {
     setLoading(true);
@@ -205,10 +185,9 @@ const CreateQuotation = () => {
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
-    setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
     // Flush search cache so new customer appears in next FirestoreAutocomplete query
-    invalidateSearchCache('customers');
+    invalidateSearchCache('customers', db);
     toast.success('Customer added');
   };
 
@@ -348,24 +327,7 @@ const CreateQuotation = () => {
               New Customer
             </Button>
           </Box>
-          {/* <Autocomplete
-            options={customers}
-            getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
-            value={selectedCustomer}
-            onChange={(_, v) => setSelectedCustomer(v)}
-            isOptionEqualToValue={(a, b) => a.id === b.id}
-            renderInput={params => (
-              <TextField {...params} label="Select Customer *" size="small" placeholder="Search by name or phone..." />
-            )}
-            renderOption={(props, o) => (
-              <Box component="li" {...props}>
-                <Box>
-                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
-                  <Typography variant="caption" color="text.secondary">{o.phone} · {o.city}</Typography>
-                </Box>
-              </Box>
-            )}
-          /> */}
+
           <FirestoreAutocomplete
             db={db}
             collectionName="customers"
@@ -422,22 +384,7 @@ const CreateQuotation = () => {
                 {items.map((it, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '6px 8px' }}>
-                      {/* <Autocomplete
-                        options={products}
-                        getOptionLabel={o => o.name || ''}
-                        value={products.find(p => p.id === it.productId) || null}
-                        onChange={(_, v) => handleProductSelect(i, v)}
-                        size="small"
-                        renderInput={params => <TextField {...params} placeholder="Select product" size="small" />}
-                        renderOption={(props, o) => (
-                          <Box component="li" {...props}>
-                            <Box>
-                              <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
-                              <Typography variant="caption" color="text.secondary">₹{o.price} · {o.unit}</Typography>
-                            </Box>
-                          </Box>
-                        )}
-                      /> */}
+
                       <FirestoreAutocomplete
                         db={db}
                         collectionName="products"
@@ -513,14 +460,7 @@ const CreateQuotation = () => {
                   </Box>
                   <Grid container spacing={1.5}>
                     <Grid item xs={12}>
-                      {/* <Autocomplete
-                        options={products}
-                        getOptionLabel={o => o.name || ''}
-                        value={products.find(p => p.id === it.productId) || null}
-                        onChange={(_, v) => handleProductSelect(i, v)}
-                        size="small"
-                        renderInput={params => <TextField {...params} label="Product" size="small" />}
-                      /> */}
+
                       <FirestoreAutocomplete
                         db={db}
                         collectionName="products"

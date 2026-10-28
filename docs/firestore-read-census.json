@@ -1,0 +1,728 @@
+{
+  "rows": [
+    {
+      "file": "src/components/AdminDataPreview.jsx",
+      "line": 18,
+      "api": "fetchPage",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/components/FirestoreAutocomplete.jsx",
+      "line": 20,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/contexts/AuthContext.js",
+      "line": 36,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/contexts/AuthContext.js",
+      "line": 75,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 40,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 52,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 56,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 56,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 56,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/dashboard.js",
+      "line": 57,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/query.js",
+      "line": 95,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/data/query.js",
+      "line": 124,
+      "api": "getDocs",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/data/query.js",
+      "line": 126,
+      "api": "getCountFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/query.js",
+      "line": 146,
+      "api": "getAggregateFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 33,
+      "api": "runTransaction",
+      "via": "driver",
+      "kind": "write",
+      "disposition": "explicit-atomic-report-job"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 65,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 66,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 72,
+      "api": "getDocs",
+      "kind": "read",
+      "disposition": "bounded-page"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 80,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/data/reportJobs.js",
+      "line": 95,
+      "api": "fetchPage",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/data/reports.js",
+      "line": 11,
+      "api": "fetchPage",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/data/reports.js",
+      "line": 14,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/data/writes.js",
+      "line": 133,
+      "api": "runTransaction",
+      "via": "driver",
+      "kind": "write",
+      "disposition": "atomic-source-adapter"
+    },
+    {
+      "file": "src/hooks/useFirestore.js",
+      "line": 11,
+      "api": "fetchPage",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/hooks/useFirestore.js",
+      "line": 16,
+      "api": "fetchPage",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/hooks/useFirestore.js",
+      "line": 35,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/hooks/useSalesQueue.js",
+      "line": 33,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/hooks/useSalesQueue.js",
+      "line": 34,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Complaints/BrandHierarchyForm.js",
+      "line": 29,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/BrandHierarchyList.js",
+      "line": 29,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/BrandHierarchyList.js",
+      "line": 113,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintDetail.js",
+      "line": 307,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintDetail.js",
+      "line": 319,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintDetail.js",
+      "line": 338,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintDetail.js",
+      "line": 342,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintList.js",
+      "line": 223,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintList.js",
+      "line": 354,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintList.js",
+      "line": 508,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintList.js",
+      "line": 509,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Complaints/ComplaintList.js",
+      "line": 510,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Complaints/CreateComplaint.js",
+      "line": 105,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/CreateComplaint.js",
+      "line": 126,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/CreateComplaint.js",
+      "line": 165,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Complaints/CreateComplaint.js",
+      "line": 278,
+      "api": "getCountFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Customers/CustomerList.js",
+      "line": 101,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/AttendanceTracker.js",
+      "line": 63,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/AttendanceTracker.js",
+      "line": 327,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/ChecklistAdminView.js",
+      "line": 36,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/ChecklistAdminView.js",
+      "line": 47,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/ChecklistAdminView.js",
+      "line": 246,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/ChecklistTemplateForm.js",
+      "line": 42,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/ChecklistTemplateList.js",
+      "line": 38,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeDashboard.js",
+      "line": 50,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeDashboard.js",
+      "line": 67,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeDashboard.js",
+      "line": 80,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeDashboard.js",
+      "line": 104,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeDashboard.js",
+      "line": 107,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeList.js",
+      "line": 29,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/EmployeeProfile.js",
+      "line": 55,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/PenaltySettings.js",
+      "line": 68,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/SalaryReport.js",
+      "line": 196,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Employees/SalaryReport.js",
+      "line": 218,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/SalaryReport.js",
+      "line": 228,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Employees/employeeData.js",
+      "line": 29,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Gifts/CreateGiftInvoice.js",
+      "line": 145,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Gifts/CreateGiftInvoice.js",
+      "line": 211,
+      "api": "getCountFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Gifts/GiftInvoiceDetail.js",
+      "line": 87,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Gifts/GiftInvoiceList.js",
+      "line": 112,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Gifts/GiftSetForm.js",
+      "line": 32,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Gifts/GiftSetList.js",
+      "line": 28,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Inventory/Inventory.js",
+      "line": 51,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Inventory/Inventory.js",
+      "line": 62,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Inventory/Inventory.js",
+      "line": 63,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Inventory/Inventory.js",
+      "line": 64,
+      "api": "fetchAggregate",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Products/ProductList.js",
+      "line": 98,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Purchase/PurchaseList.js",
+      "line": 183,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Purchase/PurchaseList.js",
+      "line": 192,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Purchase/PurchaseList.js",
+      "line": 211,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Quotations/CreateQuotation.js",
+      "line": 117,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Quotations/CreateQuotation.js",
+      "line": 236,
+      "api": "getCountFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Quotations/QuotationDetail.js",
+      "line": 34,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Quotations/QuotationsList.js",
+      "line": 49,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/CreateSale.js",
+      "line": 317,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/CreateSale.js",
+      "line": 570,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/CreateSale.js",
+      "line": 675,
+      "api": "getCountFromServer",
+      "kind": "read",
+      "disposition": "aggregate"
+    },
+    {
+      "file": "src/pages/Sales/DeliveryTracking.js",
+      "line": 121,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/DeliveryTracking.js",
+      "line": 293,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/EmiDues.js",
+      "line": 257,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/EmiList.js",
+      "line": 91,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ExchangeTracking.js",
+      "line": 99,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ExchangeTracking.js",
+      "line": 239,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ReportPeriodView.js",
+      "line": 21,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ReportPeriodView.js",
+      "line": 54,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ReportPeriodView.js",
+      "line": 58,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/ReportPeriodView.js",
+      "line": 65,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/ReportPeriodView.js",
+      "line": 98,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/SaleDetail.js",
+      "line": 519,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/SaleDetail.js",
+      "line": 526,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/pages/Sales/SalesList.js",
+      "line": 86,
+      "api": "usePagedCollection",
+      "kind": "read",
+      "disposition": "bounded-shared-query"
+    },
+    {
+      "file": "src/pages/Sales/SalesList.js",
+      "line": 93,
+      "api": "getDoc",
+      "kind": "read",
+      "disposition": "known-id"
+    },
+    {
+      "file": "src/utils/inventoryCache.js",
+      "line": 10,
+      "api": "getDocs",
+      "kind": "read",
+      "disposition": "bounded-page"
+    },
+    {
+      "file": "src/utils/inventoryUtils.js",
+      "line": 68,
+      "api": "getDocs",
+      "kind": "read",
+      "disposition": "bounded-page"
+    },
+    {
+      "file": "src/utils/knownDocument.js",
+      "line": 6,
+      "api": "getKnownDocument",
+      "kind": "read",
+      "disposition": "known-id"
+    }
+  ],
+  "violations": []
+}

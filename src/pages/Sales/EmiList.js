@@ -1,39 +1,18 @@
-// src/pages/Sales/EmiList.js
-//
-// ─── EMI PENDING LIST ─────────────────────────────────────────────────────────
-//
-//  Admin-only page linked from SalesList.
-//  Shows all EMI sales where paymentStatus is 'unpaid' or 'partial'.
-//
-//  PENDING AMOUNT CALCULATION (per sale):
-//    For each installment: max(0, inst.amount - (inst.paidAmount || 0))
-//    Sum those remainders across ALL installments.
-//    Example: 6 installments of ₹5k, 5 paid → pending = ₹5k (not ₹30k or ₹5k paid)
-//
-//  REQUIRES a Firestore composite index (auto-created on first run):
-//    Collection : sales
-//    Fields     : paymentType (Ascending) + paymentStatus (Ascending)
-//    Firestore will log a clickable URL in the console on first load.
-//
-//  PAGINATION: Client-side (bounded query — only unpaid/partial EMI sales).
-//  SEARCH:     Client-side by customer name, phone, invoice number.
-// ─────────────────────────────────────────────────────────────────────────────
-
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination,
   Chip, IconButton, LinearProgress, TextField, InputAdornment,
-  CircularProgress, Alert, Stack, Button,
+  CircularProgress, Alert, Stack, Tab, Tabs,
   useTheme, useMediaQuery,
 } from '@mui/material';
 import {
   ArrowBack, Search, CreditScore, Refresh, OpenInNew,
   Warning, Schedule,
 } from '@mui/icons-material';
-import {
-  collection, query, where, getDocs, orderBy,
-} from 'firebase/firestore';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { useQueueTotals } from '../../hooks/useSalesQueue';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -44,17 +23,7 @@ const PAGE_SIZE = 15;
 
 // ─── Compute pending amount from installments ─────────────────────────────────
 // Only counts what's still owed — fully paid installments contribute ₹0.
-const computeSalePending = (sale) => {
-  const insts = sale.emiInstallments || [];
-  if (insts.length === 0) {
-    // Fallback: if no installments tracked, use grandTotal - totalPaidAmount
-    return Math.max(0, (sale.grandTotal || 0) - (sale.totalPaidAmount || 0));
-  }
-  return insts.reduce((sum, inst) => {
-    const remaining = Math.max(0, (inst.amount || 0) - (inst.paidAmount || 0));
-    return sum + remaining;
-  }, 0);
-};
+const computeSalePending = sale => sale.emiOutstandingAmount;
 
 // ─── EMI progress string ──────────────────────────────────────────────────────
 const emiProgress = (sale) => {
@@ -66,6 +35,7 @@ const emiProgress = (sale) => {
 
 // ─── Status chip ─────────────────────────────────────────────────────────────
 const StatusChip = ({ status }) => {
+  if (status === 'paid') return <Chip label="Paid" color="success" size="small" />;
   if (status === 'partial') return <Chip label="Partial" color="warning" size="small" icon={<Schedule sx={{ fontSize: '12px !important' }} />} />;
   return <Chip label="Unpaid" color="error" size="small" icon={<Warning sx={{ fontSize: '12px !important' }} />} />;
 };
@@ -96,7 +66,7 @@ const MobileRow = ({ row, pending, navigate }) => (
         <Box textAlign="right">
           <Typography variant="caption" color="text.secondary">Pending</Typography>
           <Typography variant="body2" fontWeight={700} color="error.main">
-            {formatCurrency(pending)}
+            {pending == null ? 'Needs reconciliation' : formatCurrency(pending)}
           </Typography>
         </Box>
         <Box textAlign="right">
@@ -115,92 +85,20 @@ const EmiList = () => {
   const theme    = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows,       setRows]       = useState([]);
-  const [loading,    setLoading]    = useState(false);
-  const [page,       setPage]       = useState(0);
-  const [search,     setSearch]     = useState('');
-  const [debSearch,  setDebSearch]  = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
-  const searchTimer = useRef(null);
-
-  // Admin guard
+  const [search, setSearch] = useState('');
+  const [tab, setTab] = useState(0);
+  const filters = [['paymentType', '==', PAYMENT_TYPES.EMI], ...(tab === 0 ? [['hasPendingEmi', '==', true]] : [])];
+  const view = usePagedCollection(isAdmin ? db : null, 'sales', { search, filters, sort: tab === 0 ? [['nextEmiDueDate', 'asc']] : [['saleDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
+  const { rows, loading, page, setPage } = view;
+  const totals = useQueueTotals(isAdmin ? db : null, 'sales', [{ name: 'sales', filters, sums: { pending: 'emiOutstandingAmount', grand: 'grandTotal' } }], search);
+  const totalPending = totals.data?.sales.pending;
+  const totalGrand = totals.data?.sales.grand;
+  const pageRows = rows, debSearch = search;
+  const pendingMap = Object.fromEntries(rows.map(row => [row.id, computeSalePending(row)]));
+  const handleSearch = setSearch;
   useEffect(() => {
-    if (!isAdmin) {
-      toast.error('Admin access required');
-      navigate('/sales');
-    }
+    if (!isAdmin) { toast.error('Admin access required'); navigate('/sales'); }
   }, [isAdmin, navigate]);
-
-  // ── Fetch ────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!db || !isAdmin) return;
-    let active = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        // Fetch only EMI sales that still have an outstanding balance.
-        // Requires composite index: paymentType ASC + paymentStatus ASC
-        // (Firestore will log auto-create URL on first run)
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('paymentType',  '==',  PAYMENT_TYPES.EMI),
-          where('paymentStatus', 'in', ['unpaid', 'partial']),
-          orderBy('saleDate', 'desc'),
-        ));
-        if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setPage(0);
-      } catch (err) {
-        if (!active) return;
-        // If composite index not yet created, Firestore throws an error with a URL.
-        // Check browser console for the auto-create link.
-        console.error('[EmiList] fetch error — if this is an index error, click the URL in console:', err);
-        toast.error('Failed to load: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    load();
-    return () => { active = false; };
-  }, [db, isAdmin, refreshKey]);
-
-  // ── Debounce search ──────────────────────────────────────────────────────────
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebSearch(val);
-      setPage(0);
-    }, 350);
-  };
-
-  // ── Filter in memory ─────────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    if (!debSearch.trim()) return rows;
-    const s = debSearch.toLowerCase();
-    return rows.filter(r =>
-      (r.customerName   || '').toLowerCase().includes(s) ||
-      (r.customerPhone  || '').includes(s)               ||
-      (r.invoiceNumber  || '').toLowerCase().includes(s)
-    );
-  }, [rows, debSearch]);
-
-  // ── Pending amounts for filtered rows ────────────────────────────────────────
-  const pendingMap = useMemo(() => {
-    const map = {};
-    filtered.forEach(r => { map[r.id] = computeSalePending(r); });
-    return map;
-  }, [filtered]);
-
-  // ── Summary totals ───────────────────────────────────────────────────────────
-  const totalPending  = useMemo(() => Object.values(pendingMap).reduce((s, v) => s + v, 0), [pendingMap]);
-  const totalGrand    = useMemo(() => filtered.reduce((s, r) => s + (r.grandTotal || 0), 0), [filtered]);
-
-  // ── Current page rows ────────────────────────────────────────────────────────
-  const pageRows = useMemo(
-    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtered, page]
-  );
 
   if (!isAdmin) return null;
 
@@ -221,7 +119,7 @@ const EmiList = () => {
             Admin view — all EMI sales with outstanding balance
           </Typography>
         </Box>
-        <IconButton onClick={() => setRefreshKey(k => k + 1)} disabled={loading} size="small">
+        <IconButton onClick={view.refresh} disabled={loading} size="small">
           {loading ? <CircularProgress size={20} /> : <Refresh />}
         </IconButton>
       </Box>
@@ -232,19 +130,19 @@ const EmiList = () => {
           {[
             {
               label:    'Total Outstanding',
-              value:    formatCurrency(debSearch ? totalPending : rows.reduce((s, r) => s + computeSalePending(r), 0)),
-              sub:      debSearch ? 'filtered results' : 'across all pending EMI sales',
+              value:    totalPending == null ? '—' : formatCurrency(totalPending),
+              sub:      debSearch ? 'filtered results' : 'across all matching EMI sales',
               color:    'error',
             },
             {
               label:    debSearch ? 'Matching Sales' : 'Pending EMI Sales',
-              value:    filtered.length,
-              sub:      `of ${rows.length} total`,
+              value:    totals.data?.sales.count ?? '—',
+              sub:      'all matching invoices',
               color:    'warning',
             },
             {
               label:    'Invoice Value',
-              value:    formatCurrency(totalGrand),
+              value:    totalGrand == null ? '—' : formatCurrency(totalGrand),
               sub:      'total sale amount (filtered)',
               color:    'primary',
             },
@@ -263,6 +161,10 @@ const EmiList = () => {
         </Stack>
       )}
 
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}>
+        <Tab label="Active EMI" /><Tab label="All EMI" />
+      </Tabs>
+      <QueryStatus error={view.error || totals.error} search={search} />
       {/* ── Search ── */}
       <TextField
         fullWidth
@@ -287,13 +189,13 @@ const EmiList = () => {
       )}
 
       {/* ── Empty states ── */}
-      {!loading && rows.length === 0 && (
+      {!loading && !view.error && !search.trim() && rows.length === 0 && (
         <Alert severity="success" sx={{ borderRadius: 2 }}>
-          No pending EMI sales found — all EMI invoices are fully paid!
+          {tab === 0 ? 'No pending EMI sales found — all EMI invoices are fully paid!' : 'No EMI sales found.'}
         </Alert>
       )}
 
-      {!loading && rows.length > 0 && filtered.length === 0 && (
+      {!loading && !view.error && search.trim().length >= 2 && rows.length === 0 && (
         <Alert severity="info" sx={{ borderRadius: 2 }}>
           No results match "{debSearch}". Try a different search.
         </Alert>
@@ -303,15 +205,17 @@ const EmiList = () => {
       {!loading && isMobile && pageRows.length > 0 && (
         <Box>
           {pageRows.map(row => (
-            <MobileRow key={row.id} row={row} pending={pendingMap[row.id] || 0} navigate={navigate} />
+            <MobileRow key={row.id} row={row} pending={pendingMap[row.id]} navigate={navigate} />
           ))}
           <TablePagination
             component="div"
-            count={filtered.length}
+            count={view.total ?? -1}
             page={page}
             onPageChange={(_, p) => setPage(p)}
             rowsPerPage={PAGE_SIZE}
             rowsPerPageOptions={[PAGE_SIZE]}
+            backIconButtonProps={{ disabled: loading || page === 0 }}
+            nextIconButtonProps={{ disabled: loading || !view.hasNext }}
           />
         </Box>
       )}
@@ -335,7 +239,7 @@ const EmiList = () => {
               </TableHead>
               <TableBody>
                 {pageRows.map(row => {
-                  const pending = pendingMap[row.id] || 0;
+                  const pending = pendingMap[row.id];
                   return (
                     <TableRow
                       key={row.id}
@@ -381,7 +285,7 @@ const EmiList = () => {
                       </TableCell>
                       <TableCell align="right">
                         <Typography variant="body2" fontWeight={700} color="error.main">
-                          {formatCurrency(pending)}
+                          {pending == null ? 'Needs reconciliation' : formatCurrency(pending)}
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
@@ -404,13 +308,13 @@ const EmiList = () => {
                 <TableRow sx={{ bgcolor: 'grey.50', borderTop: '2px solid', borderColor: 'divider' }}>
                   <TableCell colSpan={4}>
                     <Typography variant="body2" fontWeight={700} color="text.secondary">
-                      {filtered.length} sale{filtered.length !== 1 ? 's' : ''}
+                      {view.total} sale{view.total !== 1 ? 's' : ''}
                       {debSearch ? ` matching "${debSearch}"` : ''}
                     </Typography>
                   </TableCell>
                   <TableCell align="right">
                     <Typography variant="body2" fontWeight={700}>
-                      {formatCurrency(totalGrand)}
+                      {totalGrand == null ? '—' : formatCurrency(totalGrand)}
                     </Typography>
                   </TableCell>
                   <TableCell align="right">
@@ -425,11 +329,13 @@ const EmiList = () => {
           </TableContainer>
           <TablePagination
             component="div"
-            count={filtered.length}
+            count={view.total ?? -1}
             page={page}
             onPageChange={(_, p) => setPage(p)}
             rowsPerPage={PAGE_SIZE}
             rowsPerPageOptions={[PAGE_SIZE]}
+            backIconButtonProps={{ disabled: loading || page === 0 }}
+            nextIconButtonProps={{ disabled: loading || !view.hasNext }}
           />
         </Card>
       )}

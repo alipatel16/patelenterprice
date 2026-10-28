@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { deriveSaleState, saleCollectedAmount } from '../../data/projections';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, Chip, Divider,
   Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead,
@@ -10,10 +11,10 @@ import {
   ArrowBack, Edit, Payment, CalendarMonth, CheckCircle,
   AccessTime, Warning, History, AttachMoney, Print, Receipt,
 } from '@mui/icons-material';
-import {
-  collection, query, where, orderBy, getDocs, updateDoc,
-  doc, getDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { getKnownDocument } from '../../data/query';
+import { recordEmiPayment, recordSalePayment, rescheduleEmi, newPaymentOperationId, installmentPaid } from '../../data/payments';
+import { indiaDay } from '../../data/salesQueues';
+import { useIndiaDay } from '../../hooks/useSalesQueue';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -24,9 +25,9 @@ import { useMediaQuery, useTheme } from '@mui/material';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const getInstallmentStatus = (inst) => {
-  const today = new Date().toISOString().split('T')[0];
-  if ((inst.paidAmount || 0) >= inst.amount) return 'paid';
-  if ((inst.paidAmount || 0) > 0) return 'partial';
+  const today = indiaDay();
+  if ((installmentPaid(inst) ?? 0) >= inst.amount) return 'paid';
+  if ((installmentPaid(inst) ?? 0) > 0) return 'partial';
   if (inst.dueDate < today) return 'overdue';
   return 'pending';
 };
@@ -58,9 +59,9 @@ const generateInvoiceHTML = (sale, installments, company, customer) => {
   const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(n || 0);
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
-  const totalSalePaid = sale.totalPaidAmount || salePayments.reduce((s, p) => s + (p.amount || 0), 0);
+  const totalSalePaid = saleCollectedAmount(sale) ?? 0;
   const emiInstallmentsPaid = isEMI
-    ? installments.reduce((s, i) => s + (i.paidAmount || 0), 0)
+    ? installments.reduce((s, i) => s + (installmentPaid(i) ?? 0), 0)
     : 0;
   const currentBalanceDue = sale.paymentType === PAYMENT_TYPES.FULL
     ? 0
@@ -75,7 +76,7 @@ const generateInvoiceHTML = (sale, installments, company, customer) => {
   };
 
   const emiRows = isEMI ? installments.map(inst => {
-    const paidAmt = inst.paidAmount || 0;
+    const paidAmt = installmentPaid(inst) ?? 0;
     const status = paidAmt >= inst.amount ? 'Paid' : paidAmt > 0 ? 'Partial' : new Date(inst.dueDate) < new Date() ? 'Overdue' : 'Pending';
     const color = status === 'Paid' ? '#16a34a' : status === 'Partial' ? '#d97706' : status === 'Overdue' ? '#dc2626' : '#6b7280';
     return `<tr>
@@ -231,7 +232,7 @@ const printInvoice = (sale, installments, company, customer) => {
 const printReceipt = (sale, payment, company) => {
   const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(n || 0);
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-  const totalPaid = (sale.salePayments || []).reduce((s, p) => s + p.amount, 0);
+  const totalPaid = saleCollectedAmount(sale) ?? 0;
   const balance = (sale.grandTotal || 0) - totalPaid;
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Payment Receipt</title>
@@ -285,16 +286,18 @@ const printReceipt = (sale, payment, company) => {
 // ─── Record EMI Payment Dialog ────────────────────────────────────────────────
 
 const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
-  const remaining = installment ? installment.amount - (installment.paidAmount || 0) : 0;
+  const remaining = installment ? installment.amount - (installmentPaid(installment) ?? 0) : 0;
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState('Cash');
-  const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
+  const [payDate, setPayDate] = useState(indiaDay());
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const submission = useRef(null);
 
   useEffect(() => {
-    if (open) { setAmount(''); setMode('Cash'); setPayDate(new Date().toISOString().split('T')[0]); setNotes(''); setError(''); }
+    submission.current = null;
+    if (open) { setAmount(''); setMode('Cash'); setPayDate(indiaDay()); setNotes(''); setError(''); }
   }, [open]);
 
   const handleSave = async () => {
@@ -302,8 +305,11 @@ const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
     if (!amt || amt <= 0) { setError('Enter a valid amount'); return; }
     if (amt > remaining + 0.01) { setError(`Max: ${formatCurrency(remaining)}`); return; }
     if (!payDate) { setError('Select payment date'); return; }
+    const payload = { amount: amt, mode, payDate, notes };
+    const key = JSON.stringify(payload);
+    if (submission.current?.key !== key) submission.current = { key, operationId: newPaymentOperationId() };
     setLoading(true);
-    try { await onSave({ amount: amt, mode, payDate, notes }); onClose(); }
+    try { await onSave({ ...payload, operationId: submission.current.operationId }); onClose(); }
     catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -311,7 +317,7 @@ const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
   if (!installment) return null;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Record Payment — EMI #{installment.installmentNumber}</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -338,7 +344,7 @@ const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
         </Grid>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={onClose} variant="outlined" disabled={loading}>Cancel</Button>
         <Button onClick={handleSave} variant="contained" disabled={loading}
           startIcon={loading ? <CircularProgress size={16} /> : <Payment />}>
           Record Payment
@@ -351,17 +357,19 @@ const RecordPaymentDialog = ({ open, onClose, installment, onSave }) => {
 // ─── Record Sale Payment Dialog (non-EMI) ────────────────────────────────────
 
 const RecordSalePaymentDialog = ({ open, onClose, sale, onSave }) => {
-  const existingTotal = (sale?.salePayments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const existingTotal = sale?.totalPaidAmount ?? 0;
   const remaining = sale ? (sale.grandTotal || 0) - existingTotal : 0;
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState('Cash');
-  const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
+  const [payDate, setPayDate] = useState(indiaDay());
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const submission = useRef(null);
 
   useEffect(() => {
-    if (open) { setAmount(''); setMode('Cash'); setPayDate(new Date().toISOString().split('T')[0]); setNotes(''); setError(''); }
+    submission.current = null;
+    if (open) { setAmount(''); setMode('Cash'); setPayDate(indiaDay()); setNotes(''); setError(''); }
   }, [open]);
 
   const handleSave = async () => {
@@ -369,8 +377,11 @@ const RecordSalePaymentDialog = ({ open, onClose, sale, onSave }) => {
     if (!amt || amt <= 0) { setError('Enter a valid amount'); return; }
     if (amt > remaining + 0.01) { setError(`Max: ${formatCurrency(remaining)}`); return; }
     if (!payDate) { setError('Select date'); return; }
+    const payload = { amount: amt, mode, payDate, notes };
+    const key = JSON.stringify(payload);
+    if (submission.current?.key !== key) submission.current = { key, operationId: newPaymentOperationId() };
     setLoading(true);
-    try { await onSave({ amount: amt, mode, payDate, notes }); onClose(); }
+    try { await onSave({ ...payload, operationId: submission.current.operationId }); onClose(); }
     catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -378,7 +389,7 @@ const RecordSalePaymentDialog = ({ open, onClose, sale, onSave }) => {
   if (!sale) return null;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Record Payment</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -407,7 +418,7 @@ const RecordSalePaymentDialog = ({ open, onClose, sale, onSave }) => {
         </Grid>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={onClose} variant="outlined" disabled={loading}>Cancel</Button>
         <Button onClick={handleSave} variant="contained" disabled={loading}
           startIcon={loading ? <CircularProgress size={16} /> : <Payment />}>
           Record Payment
@@ -424,17 +435,21 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const submission = useRef(null);
 
   useEffect(() => {
-    if (open && installment) { setNewDate(installment.dueDate || ''); setReason(''); setError(''); }
+    if (open && installment) { submission.current = null; setNewDate(installment.dueDate || ''); setReason(''); setError(''); }
   }, [open, installment]);
 
   const handleSave = async () => {
     if (!newDate) { setError('Select a new date'); return; }
     if (!reason.trim()) { setError('Reason is required'); return; }
     if (newDate === installment.dueDate) { setError('New date is same as current'); return; }
+    const payload = { newDate, reason };
+    const key = JSON.stringify({ installmentNumber: installment.installmentNumber, ...payload });
+    if (submission.current?.key !== key) submission.current = { key, operationId: newPaymentOperationId() };
     setLoading(true);
-    try { await onSave({ newDate, reason }); onClose(); }
+    try { await onSave({ ...payload, operationId: submission.current.operationId }); onClose(); }
     catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -443,7 +458,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
   const changeCount = installment.dueDateChangeCount || 0;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Change Due Date — EMI #{installment.installmentNumber}</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -468,7 +483,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
         </Grid>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={onClose} variant="outlined" disabled={loading}>Cancel</Button>
         <Button onClick={handleSave} variant="contained" color="warning" disabled={loading}
           startIcon={loading ? <CircularProgress size={16} /> : <CalendarMonth />}>
           Change Date
@@ -490,6 +505,7 @@ const SaleDetail = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  useIndiaDay();
   const [sale, setSale] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -501,40 +517,15 @@ const SaleDetail = () => {
   const loadSale = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await getDoc(doc(db, 'sales', id));
-      if (!snap.exists()) { toast.error('Sale not found'); navigate('/sales'); return; }
-      let saleData = { id: snap.id, ...snap.data() };
-
-      if (saleData.paymentType === PAYMENT_TYPES.EMI && !saleData.emiInstallments?.length) {
-        try {
-          const oldSnap = await getDocs(
-            query(collection(db, 'emi_installments'), where('saleId', '==', id), orderBy('installmentNumber'))
-          );
-          if (!oldSnap.empty) {
-            const oldInstallments = oldSnap.docs.map(d => {
-              const data = d.data();
-              const { saleId, invoiceNumber: _inv, customerName: _cn, customerPhone: _cp,
-                createdAt: _ca, updatedAt: _ua, ...rest } = data;
-              return rest;
-            });
-            saleData = { ...saleData, emiInstallments: oldInstallments };
-            await updateDoc(doc(db, 'sales', id), {
-              emiInstallments: oldInstallments,
-              updatedAt: serverTimestamp(),
-            });
-          }
-        } catch (e) {
-          console.warn('[SaleDetail] Could not migrate old emi_installments:', e.message);
-        }
-      }
-
-      setSale(saleData);
+      const saleData = await getKnownDocument(db, 'sales', id, { ttlMs: 0 });
+      if (!saleData) { toast.error('Sale not found'); navigate('/sales'); return; }
+      setSale({ ...saleData, ...deriveSaleState(saleData) });
 
       // Fetch customer address from customers collection for print invoice
       if (saleData.customerId) {
         try {
-          const custSnap = await getDoc(doc(db, 'customers', saleData.customerId));
-          if (custSnap.exists()) setCustomer({ id: custSnap.id, ...custSnap.data() });
+          const customerData = await getKnownDocument(db, 'customers', saleData.customerId);
+          setCustomer(customerData);
         } catch {
           // Non-critical — address just won't appear on the print if fetch fails
         }
@@ -544,123 +535,27 @@ const SaleDetail = () => {
     } finally {
       setLoading(false);
     }
-  }, [db, id]);
+  }, [db, id, navigate]);
 
   useEffect(() => {
     if (db && id) loadSale();
-  }, [db, id]);
+  }, [db, id, loadSale]);
 
-  const handleRecordEmiPayment = async ({ amount, mode, payDate, notes }) => {
-    const inst = payDialog;
-    const instIdx = (sale.emiInstallments || []).findIndex(i => i.installmentNumber === inst.installmentNumber);
-    if (instIdx === -1) { toast.error('Installment not found'); return; }
-
-    const updatedInstallments = [...(sale.emiInstallments || [])];
-    const existing = updatedInstallments[instIdx];
-    const newPaid = (existing.paidAmount || 0) + amount;
-    const newStatus = newPaid >= existing.amount ? 'paid' : 'partial';
-    updatedInstallments[instIdx] = {
-      ...existing,
-      paidAmount: newPaid,
-      status: newStatus,
-      payments: [...(existing.payments || []), {
-        amount, mode, payDate, notes,
-        recordedAt: new Date().toISOString(),
-        recordedByName: userProfile?.name || user?.email || '',
-      }],
-    };
-
-    // try {
-    //   await updateDoc(doc(db, 'sales', id), {
-    //     emiInstallments: updatedInstallments,
-    //     updatedAt: serverTimestamp(),
-    //   });
-    //   toast.success(`Payment of ${formatCurrency(amount)} recorded`);
-    //   await loadSale();
-    // } catch (e) {
-    //   toast.error('Failed: ' + e.message);
-    // }
-
-    const downPaymentAmt   = sale.downPayment || 0;
-    const instTotalPaid    = updatedInstallments.reduce((s, i) => s + (i.paidAmount || 0), 0);
-    const newTotalPaidAmt  = instTotalPaid + downPaymentAmt;
- 
-    const allInstPaid = updatedInstallments.length > 0 &&
-      updatedInstallments.every(i => (i.paidAmount || 0) >= i.amount);
-    const anyInstPaid = instTotalPaid > 0 || downPaymentAmt > 0;
- 
-    const newPaymentStatus = allInstPaid ? 'paid'
-      : anyInstPaid        ? 'partial'
-      :                      'unpaid';
- 
-    try {
-      await updateDoc(doc(db, 'sales', id), {
-        emiInstallments:  updatedInstallments,
-        paymentStatus:    newPaymentStatus,    // ← was missing — now always in sync
-        totalPaidAmount:  newTotalPaidAmt,     // ← keeps totalPaidAmount accurate too
-        updatedAt:        serverTimestamp(),
-      });
-      toast.success(
-        allInstPaid
-          ? `Final payment recorded — EMI fully paid! 🎉`
-          : `Payment of ${formatCurrency(amount)} recorded`
-      );
-      await loadSale();
-    } catch (e) {
-      toast.error('Failed: ' + e.message);
-    }
+  const recorder = userProfile?.name || user?.email || '';
+  const handleRecordEmiPayment = async ({ operationId, ...payment }) => {
+    const acknowledged = await recordEmiPayment(db, id, payDialog.installmentNumber, { ...payment, recordedByName: recorder }, operationId);
+    setSale(acknowledged);
+    toast.success(`Payment of ${formatCurrency(payment.amount)} recorded`);
   };
-
-  const handleChangeDueDate = async ({ newDate, reason }) => {
-    const inst = dateDialog;
-    const instIdx = (sale.emiInstallments || []).findIndex(i => i.installmentNumber === inst.installmentNumber);
-    if (instIdx === -1) { toast.error('Installment not found'); return; }
-
-    const updatedInstallments = [...(sale.emiInstallments || [])];
-    const existing = updatedInstallments[instIdx];
-    updatedInstallments[instIdx] = {
-      ...existing,
-      dueDate: newDate,
-      dueDateChanges: [...(existing.dueDateChanges || []), {
-        from: existing.dueDate, to: newDate, reason, changedAt: new Date().toISOString(),
-      }],
-      dueDateChangeCount: (existing.dueDateChangeCount || 0) + 1,
-    };
-
-    try {
-      await updateDoc(doc(db, 'sales', id), {
-        emiInstallments: updatedInstallments,
-        updatedAt: serverTimestamp(),
-      });
-      toast.success('Due date updated');
-      await loadSale();
-    } catch (e) {
-      toast.error('Failed: ' + e.message);
-    }
+  const handleChangeDueDate = async ({ newDate, reason, operationId }) => {
+    const acknowledged = await rescheduleEmi(db, id, dateDialog.installmentNumber, newDate, reason, operationId);
+    setSale(acknowledged);
+    toast.success('Due date updated');
   };
-
-  const handleRecordSalePayment = async ({ amount, mode, payDate, notes }) => {
-    const newPayment = {
-      amount, mode, payDate, notes,
-      recordedAt: new Date().toISOString(),
-      recordedByName: userProfile?.name || user?.email || '',
-    };
-    const newPayments = [...(sale.salePayments || []), newPayment];
-    const newTotal = newPayments.reduce((s, p) => s + p.amount, 0);
-    const newStatus = newTotal >= sale.grandTotal ? 'paid' : 'partial';
-
-    try {
-      await updateDoc(doc(db, 'sales', id), {
-        salePayments: newPayments,
-        totalPaidAmount: newTotal,
-        paymentStatus: newStatus,
-        updatedAt: serverTimestamp(),
-      });
-      toast.success(`Payment of ${formatCurrency(amount)} recorded`);
-      await loadSale();
-    } catch (e) {
-      toast.error('Failed: ' + e.message);
-    }
+  const handleRecordSalePayment = async ({ operationId, ...payment }) => {
+    const acknowledged = await recordSalePayment(db, id, { ...payment, recordedByName: recorder }, operationId);
+    setSale(acknowledged);
+    toast.success(`Payment of ${formatCurrency(payment.amount)} recorded`);
   };
 
   if (loading) return (
@@ -676,17 +571,18 @@ const SaleDetail = () => {
 
   const installments = sale.emiInstallments || [];
   const totalInstAmt = installments.reduce((s, i) => s + i.amount, 0);
-  const totalPaid = installments.reduce((s, i) => s + (i.paidAmount || 0), 0);
+  const totalPaid = installments.reduce((s, i) => s + (installmentPaid(i) ?? 0), 0);
   const totalRemaining = totalInstAmt - totalPaid;
   const paidCount = installments.filter(i => getInstallmentStatus(i) === 'paid').length;
   const overdueCount = installments.filter(i => getInstallmentStatus(i) === 'overdue').length;
 
   const salePayments = sale.salePayments || [];
-  const totalSalePaid = sale.totalPaidAmount || salePayments.reduce((s, p) => s + p.amount, 0);
+  const totalSalePaid = saleCollectedAmount(sale) ?? 0;
   const saleBalance = (sale.grandTotal || 0) - totalSalePaid;
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1000, mx: 'auto' }}>
+      {sale.financialReconciliationRequired && <Alert severity="warning" sx={{ mb: 2 }}>This invoice has financial inconsistencies. Reconcile its payment history before recording another payment.</Alert>}
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={1}>
         <Box display="flex" alignItems="center" gap={1}>
@@ -976,8 +872,8 @@ const SaleDetail = () => {
                               {!isMobile && <TableCell align="right">{formatCurrency(inst.amount)}</TableCell>}
                               {!isMobile && (
                                 <TableCell align="right">
-                                  {inst.paidAmount > 0
-                                    ? <Typography variant="body2" color="success.main" fontWeight={600}>{formatCurrency(inst.paidAmount)}</Typography>
+                                  {installmentPaid(inst) > 0
+                                    ? <Typography variant="body2" color="success.main" fontWeight={600}>{formatCurrency(installmentPaid(inst))}</Typography>
                                     : '—'}
                                 </TableCell>
                               )}
@@ -1012,7 +908,7 @@ const SaleDetail = () => {
               </>
             ) : (
               <Alert severity="warning" sx={{ mb: 2 }}>
-                No EMI installments found. This may be an older record — try editing and re-saving to regenerate.
+                No EMI schedule is available. This legacy record needs reconciliation before recording installment payments.
               </Alert>
             )}
 

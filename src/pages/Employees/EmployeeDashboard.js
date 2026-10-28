@@ -1,5 +1,10 @@
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { TablePagination } from '@mui/material';
+import { getKnownSnapshot as getDoc, loadChecklistDays } from './employeeData';
+import { updateRecord as updateDoc, setRecord as setDoc } from '../../data/writes';
 // src/pages/Employees/EmployeeDashboard.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Card, CardContent, Button, CircularProgress,
   Alert, Chip, Stack, Divider, Dialog, DialogTitle, DialogContent,
@@ -12,10 +17,7 @@ import {
   BeachAccess, CheckCircle, RadioButtonUnchecked, LocationOn,
   AccessTime, Refresh, Warning,
 } from '@mui/icons-material';
-import {
-  doc, setDoc, getDoc, updateDoc, serverTimestamp,
-  collection, getDocs, query, where,
-} from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import {
@@ -45,15 +47,25 @@ const EmployeeDashboard = () => {
   const userId = user?.uid;
 
   const [log,          setLog]          = useState(null);   // today's attendanceLog
-  const [checklists,   setChecklists]   = useState([]);     // today's checklistInstances
+  const taskPage = usePagedCollection(db && userId ? db : null, 'checklistInstances', { filters: [['userId', '==', userId || ''], ['date', '==', today]], sort: [['createdAt', 'asc']], pageSize: 15 });
+  const checklists = taskPage.rows;
+  const [checklistSummary, setChecklistSummary] = useState(null);
+  const generationIdentity = useRef(null);
+  if (generationIdentity.current?.db !== db || generationIdentity.current?.userId !== userId || generationIdentity.current?.today !== today) {
+    generationIdentity.current = { db, userId, today };
+  }
+  const [generationProgress, setGenerationProgress] = useState(null);
+  const generationCursor = generationProgress?.identity === generationIdentity.current ? generationProgress.cursor : 0;
   const [loading,      setLoading]      = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Dialogs
   const [leaveDialogOpen,  setLeaveDialogOpen]  = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [leaveReason,      setLeaveReason]      = useState('');
-  const [pendingChecklists, setPendingChecklists] = useState([]);
+  const pendingPage = usePagedCollection(logoutDialogOpen ? db : null, 'checklistInstances', { filters: [['userId', '==', userId || ''], ['date', '==', today], ['completed', '==', false]], sort: [['createdAt', 'asc']], pageSize: 15 });
+  const pendingChecklists = pendingPage.rows;
   // CHANGE 1: per-checklist not-completed reasons state
   const [checklistReasons, setChecklistReasons] = useState({});
 
@@ -62,19 +74,16 @@ const EmployeeDashboard = () => {
   // ── Load today's data ──────────────────────────────────────────────────────
   const loadTodayData = useCallback(async () => {
     if (!db || !userId) return;
-    setLoading(true);
+    setLoadError(null); setLoading(true);
     try {
-      const [logSnap, clSnap] = await Promise.all([
+      const [logSnap, summaryDays] = await Promise.all([
         getDoc(doc(db, 'attendanceLogs', logDocId)),
-        getDocs(query(collection(db, 'checklistInstances'),
-          where('userId', '==', userId),
-          where('date', '==', today)
-        )),
+        loadChecklistDays(db, [userId], [today]),
       ]);
       setLog(logSnap.exists() ? { id: logSnap.id, ...logSnap.data() } : null);
-      setChecklists(clSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setChecklistSummary(summaryDays[0] || null);
     } catch (e) {
-      toast.error('Failed to load: ' + e.message);
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
@@ -84,44 +93,26 @@ const EmployeeDashboard = () => {
 
   // ── Generate checklists for today (called on clock-in) ─────────────────────
   const generateChecklists = async () => {
+    const identity = generationIdentity.current;
     const assigned = userProfile?.assignedChecklists || [];
     if (assigned.length === 0) return;
 
-    // CHANGE 2: verify each template still exists before generating instance
-    const templateSnaps = await Promise.all(
-      assigned.map(cl => getDoc(doc(db, 'checklistTemplates', cl.templateId)))
-    );
-    const validAssigned = assigned.filter((_, i) => templateSnaps[i].exists());
-
-    // Silently remove deleted templates from user profile
-    if (validAssigned.length !== assigned.length) {
-      try {
-        await updateDoc(doc(db, 'users', userId), {
-          assignedChecklists: validAssigned,
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (_) { /* non-critical */ }
+    const batch = assigned.slice(generationCursor, generationCursor + 15);
+    // Deterministic source IDs plus an operation marker protect retries, including
+    // a concurrent generation request after another tab has completed a task.
+    for (const cl of batch) {
+      const template = await getDoc(doc(db, 'checklistTemplates', cl.templateId));
+      if (!template.exists() || !shouldGenerateChecklist(cl, today)) continue;
+      const instanceId = `${userId}_${cl.templateId}_${today}`;
+      const existing = await getDoc(doc(db, 'checklistInstances', instanceId));
+      if (!existing.exists()) await setDoc(doc(db, 'checklistInstances', instanceId), {
+        userId, userName: userProfile?.name || '', templateId: cl.templateId,
+        templateTitle: cl.templateTitle || template.data().title || '', date: today,
+        completed: false, completedAt: null, createdAt: new Date().toISOString(),
+      }, { operationId: 'generate-checklist-v2' });
     }
-
-    const promises = validAssigned
-      .filter(cl => shouldGenerateChecklist(cl, today))
-      .map(async cl => {
-        const instanceId = `${userId}_${cl.templateId}_${today}`;
-        const existing   = await getDoc(doc(db, 'checklistInstances', instanceId));
-        if (!existing.exists()) {
-          await setDoc(doc(db, 'checklistInstances', instanceId), {
-            userId,
-            userName:      userProfile.name,
-            templateId:    cl.templateId,
-            templateTitle: cl.templateTitle,
-            date:          today,
-            completed:     false,
-            completedAt:   null,
-            createdAt:     new Date().toISOString(),
-          });
-        }
-      });
-    await Promise.all(promises);
+    if (generationIdentity.current === identity) setGenerationProgress({ identity, cursor: generationCursor + batch.length });
+    taskPage.refresh();
   };
 
   // ── Validate location ──────────────────────────────────────────────────────
@@ -216,15 +207,17 @@ const EmployeeDashboard = () => {
 
   // ── Clock Out ─────────────────────────────────────────────────────────────
   const handleClockOutIntent = async () => {
+    try {
     // Check pending checklists first
-    const pending = checklists.filter(cl => !cl.completed);
-    if (pending.length > 0) {
-      setPendingChecklists(pending);
+    const summaryDays = await loadChecklistDays(db, [userId], [today]);
+    setChecklistSummary(summaryDays[0] || null);
+    if ((summaryDays[0]?.pendingCount || 0) > 0) {
       setChecklistReasons({}); // CHANGE 1: reset reasons on open
       setLogoutDialogOpen(true);
     } else {
       await performClockOut();
     }
+    } catch (e) { toast.error(e.message); }
   };
 
   const performClockOut = async () => {
@@ -257,15 +250,11 @@ const EmployeeDashboard = () => {
   const performClockOutWithReasons = async () => {
     setActionLoading(true);
     try {
-      const reasonSavePromises = pendingChecklists
-        .filter(cl => checklistReasons[cl.id]?.trim())
-        .map(cl =>
-          updateDoc(doc(db, 'checklistInstances', cl.id), {
-            notCompleted:       true,
-            notCompletedReason: checklistReasons[cl.id].trim(),
-            notCompletedAt:     new Date().toISOString(),
-          })
-        );
+      const reasonSavePromises = Object.entries(checklistReasons)
+        .filter(([, reason]) => reason?.trim())
+        .map(([id, reason]) => updateDoc(doc(db, 'checklistInstances', id), {
+          notCompleted: true, notCompletedReason: reason.trim(), notCompletedAt: new Date().toISOString(),
+        }));
       if (reasonSavePromises.length > 0) await Promise.all(reasonSavePromises);
     } catch (_) { /* non-critical */ }
     await performClockOut();
@@ -308,9 +297,8 @@ const EmployeeDashboard = () => {
       const completed   = !cl.completed;
       const completedAt = completed ? new Date().toISOString() : null;
       await updateDoc(doc(db, 'checklistInstances', cl.id), { completed, completedAt });
-      setChecklists(prev =>
-        prev.map(c => c.id === cl.id ? { ...c, completed, completedAt } : c)
-      );
+      taskPage.refresh();
+      await loadTodayData();
     } catch (e) {
       toast.error('Failed to update: ' + e.message);
     }
@@ -321,13 +309,18 @@ const EmployeeDashboard = () => {
   const isClockedIn = log && !isOnLeave && !log.logoutTime;
   const isClockedOut = log && !isOnLeave && !!log.logoutTime;
   const isOnBreak  = isClockedIn && log?.breaks?.length > 0 && !log.breaks[log.breaks.length - 1]?.endTime;
-  const completedCount = checklists.filter(c => c.completed).length;
-  const progress = checklists.length > 0 ? (completedCount / checklists.length) * 100 : 0;
+  const completedCount = checklistSummary?.completedCount || 0;
+  const checklistCount = checklistSummary?.totalCount || 0;
+  const progress = checklistCount > 0 ? (completedCount / checklistCount) * 100 : 0;
 
+  if (loadError && !loading) return <Box sx={{ p: 3 }}><Alert severity="error">{loadError.message}</Alert><Button onClick={loadTodayData}>Reload today</Button></Box>;
   if (loading) return <Box display="flex" justifyContent="center" pt={8}><CircularProgress /></Box>;
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 720, mx: 'auto' }}>
+      <QueryStatus error={taskPage.error} loading={taskPage.loading} />
+      <TablePagination component="div" count={taskPage.total ?? -1} page={taskPage.page} rowsPerPage={15} rowsPerPageOptions={[15]} onPageChange={(_, p) => taskPage.setPage(p)} nextIconButtonProps={{ disabled: taskPage.loading || !taskPage.hasNext }} />
+      {generationCursor < (userProfile?.assignedChecklists?.length || 0) && isClockedIn && <Button disabled={actionLoading} onClick={async () => { setActionLoading(true); try { await generateChecklists(); await loadTodayData(); } catch (e) { toast.error(e.message); } finally { setActionLoading(false); } }}>Generate next 15 assigned tasks</Button>}
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
         <Box>
@@ -476,7 +469,7 @@ const EmployeeDashboard = () => {
                 Today's Checklist
               </Typography>
               <Chip
-                label={`${completedCount} / ${checklists.length}`}
+                label={`${completedCount} / ${checklistCount}`}
                 color={progress === 100 ? 'success' : progress > 0 ? 'warning' : 'default'}
                 size="small"
               />
@@ -586,11 +579,13 @@ const EmployeeDashboard = () => {
         </DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            You have <strong>{pendingChecklists.length}</strong> incomplete checklist item(s).
+            You have <strong>{checklistSummary?.pendingCount || 0}</strong> incomplete checklist item(s).
             You can provide a reason for each before clocking out.
           </Alert>
           {/* CHANGE 1: per-checklist reason fields */}
           <Stack spacing={1.5}>
+            <QueryStatus error={pendingPage.error} loading={pendingPage.loading} />
+            <TablePagination component="div" count={pendingPage.total ?? -1} page={pendingPage.page} rowsPerPage={15} rowsPerPageOptions={[15]} onPageChange={(_, p) => pendingPage.setPage(p)} nextIconButtonProps={{ disabled: pendingPage.loading || !pendingPage.hasNext }} />
             {pendingChecklists.map(cl => (
               <Box key={cl.id}
                 sx={{ p: 1.5, bgcolor: 'warning.50', borderRadius: 1, border: '1px solid', borderColor: 'warning.200' }}>

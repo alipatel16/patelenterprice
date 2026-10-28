@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function sourceCollection(name) {
+      return name in ['customers', 'products', 'inventory', 'purchases', 'sales',
+        'quotations', 'giftInvoices', 'giftSets', 'brandHierarchies', 'complaints',
+        'users', 'attendanceLogs', 'checklistInstances', 'checklistTemplates',
+        'salaryReports', 'settings', 'appSettings'];
+    }
+    function validSource(data) {
+      return data._writeRevision is int && data._writeRevision > 0 &&
+        data._projectionVersion == 2 && data.searchVersion == 2 &&
+        data.searchTokens is list && data._deleteMarkerId is string &&
+        data._writeToken is string && data._writeToken.size() > 0;
+    }
+    function previousRevision() {
+      return resource.data.get('_writeRevision', 0);
+    }
+    function createRevision(data) {
+      let marker = /databases/$(database)/documents/_deletionOps/$(data._deleteMarkerId);
+      return data._writeRevision == (exists(marker) ? get(marker).data.revision + 1 : 1);
+    }
+    function validDelete(collectionName, documentId) {
+      let marker = /databases/$(database)/documents/_deletionOps/$(resource.data._deleteMarkerId);
+      return getAfter(marker).data.schemaVersion == 2 &&
+        getAfter(marker).data.sourcePath == collectionName + '/' + documentId &&
+        getAfter(marker).data.revision == getAfter(marker).data.previousRevision + 1 &&
+        getAfter(marker).data._writeToken is string &&
+        (!exists(marker) || getAfter(marker).data._writeToken != get(marker).data._writeToken);
+    }
+    match /{collectionName}/{documentId} {
+      // Retains the deployed authenticated staff access model. The version
+      // guard blocks stale clients that omit synchronized projection writes.
+      allow read: if signedIn();
+      allow create: if signedIn() && (!sourceCollection(collectionName) ||
+        (validSource(request.resource.data) && createRevision(request.resource.data)));
+      allow update: if signedIn() && (!sourceCollection(collectionName) ||
+        (validSource(request.resource.data) &&
+         request.resource.data._writeToken != resource.data.get('_writeToken', '') &&
+         request.resource.data._deleteMarkerId == resource.data.get('_deleteMarkerId', request.resource.data._deleteMarkerId)));
+      allow delete: if signedIn() && (!sourceCollection(collectionName) || validDelete(collectionName, documentId));
+    }
+    match /{document=**} {
+      // Backups found no subcollections. Preserve authenticated reads, while
+      // new nested writes need an explicit supported adapter/rule contract.
+      allow read: if signedIn();
+    }
+  }
+}

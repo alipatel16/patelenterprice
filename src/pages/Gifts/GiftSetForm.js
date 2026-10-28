@@ -1,15 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  MenuItem, Select, FormControl, InputLabel, IconButton, Alert,
-  CircularProgress, Chip, Stack, Divider, InputAdornment,
-} from '@mui/material';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, IconButton, Alert, CircularProgress, Chip, Stack, InputAdornment } from '@mui/material';
 import {
   ArrowBack, Save, Delete, AddCircle, CardGiftcard,
 } from '@mui/icons-material';
-import {
-  collection, addDoc, updateDoc, doc, getDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';

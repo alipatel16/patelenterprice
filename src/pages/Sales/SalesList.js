@@ -1,5 +1,9 @@
-// src/pages/Sales/SalesList.js
-import React, { useState, useEffect, useRef } from 'react';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { deleteRecord as deleteDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions } from '../../utils/businessListQueries';
+import { useState } from 'react';
 import {
   Box, Typography, Button, Card, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -7,15 +11,8 @@ import {
   DialogContent, DialogActions, MenuItem, Select, FormControl,
   InputLabel, Stack, Collapse,
 } from '@mui/material';
-import {
-  Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule,
-  DateRange, Clear, ShowChart,
-  CreditScore,
-} from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getDoc, getCountFromServer, where,
-} from 'firebase/firestore';
+import { Add, Search, Edit, Delete, FilterList, LocalShipping, Schedule, DateRange, Clear, CreditScore } from '@mui/icons-material';
+import { doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -24,7 +21,7 @@ import { formatCurrency, formatDate, getPaymentStatusColor } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 import { reverseSaleInventory } from '../../utils/inventoryUtils';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const DATE_PRESETS = [
   { label: 'Today',        getDates: () => { const d = new Date(); return [d, d]; } },
@@ -37,31 +34,14 @@ const DATE_PRESETS = [
 
 const toInputDate = d => d ? d.toISOString().split('T')[0] : '';
 
-/**
- * Returns true when both dates are set AND the range is ≤ 31 days.
- * When true we switch to "fetch all in range + in-memory search" mode,
- * enabling real cross-page search within a bounded dataset.
- */
-const isSearchableRange = (from, to) => {
-  if (!from || !to) return false;
-  const diff = (new Date(to) - new Date(from)) / 86_400_000;
-  return diff >= 0 && diff <= 31;
-};
-
 const SalesList = () => {
   const { db, isAdmin } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows,    setRows]    = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total,   setTotal]   = useState(0);
-  const [page,    setPage]    = useState(0);
-
   // Search
   const [search,          setSearch]          = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Filters
   const [paymentFilter,  setPaymentFilter]  = useState('all');
@@ -73,20 +53,13 @@ const SalesList = () => {
   const [dateTo,       setDateTo]       = useState('');
   const [activePreset, setActivePreset] = useState('');
 
-  const [cursorMap,   setCursorMap]   = useState({});
   const [deleteId,    setDeleteId]    = useState(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [refreshKey,  setRefreshKey]  = useState(0);
-  const searchTimer = useRef(null);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  const resetPagination = () => { setPage(0); setCursorMap({}); };
+  const resetPagination = () => { setPage(0);  };
 
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); resetPagination(); }, 450);
-  };
+  const handleSearch = setSearch;
 
   const handleFilterChange = setter => e => { setter(e.target.value); resetPagination(); };
 
@@ -109,105 +82,22 @@ const SalesList = () => {
     resetPagination();
   };
 
-  const buildDateConstraints = () => {
-    const c = [];
-    if (dateFrom) c.push(where('saleDate', '>=', dateFrom));
-    if (dateTo)   c.push(where('saleDate', '<=', dateTo));
-    return c;
-  };
-
   // ── Data loading ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-
-    const run = async () => {
-      setLoading(true);
-      try {
-        const dateConstraints   = buildDateConstraints();
-        const filterConstraints = [];
-        if (paymentFilter  !== 'all') filterConstraints.push(where('paymentType',  '==', paymentFilter));
-        if (invoiceFilter  !== 'all') filterConstraints.push(where('invoiceType',  '==', invoiceFilter));
-        if (deliveryFilter !== 'all') filterConstraints.push(where('deliveryType', '==', deliveryFilter));
-
-        // ── SEARCH MODE: date range ≤ 31 days ───────────────────────────
-        // Fetch ALL sales in the date window (bounded), apply remaining
-        // filters and the text search in memory, then paginate in memory.
-        // The date presets ("This Month", "Last 7 Days", etc.) all satisfy
-        // this condition, so they naturally enable the search bar.
-        if (isSearchableRange(dateFrom, dateTo)) {
-          const snap = await getDocs(query(
-            collection(db, 'sales'),
-            ...dateConstraints,
-            orderBy('saleDate', 'desc'),
-            // No limit — bounded by ≤31-day range
-          ));
-          if (!active) return;
-
-          let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-          // Apply dropdown filters in memory
-          if (paymentFilter  !== 'all') docs = docs.filter(d => d.paymentType  === paymentFilter);
-          if (invoiceFilter  !== 'all') docs = docs.filter(d => d.invoiceType  === invoiceFilter);
-          if (deliveryFilter !== 'all') docs = docs.filter(d => d.deliveryType === deliveryFilter);
-
-          // Apply text search
-          if (debouncedSearch.trim()) {
-            const s = debouncedSearch.toLowerCase();
-            docs = docs.filter(d =>
-              d.invoiceNumber?.toLowerCase().includes(s) ||
-              d.customerName?.toLowerCase().includes(s)  ||
-              d.customerPhone?.includes(s)
-            );
-          }
-
-          setTotal(docs.length);
-          setRows(docs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
-          return;
-        }
-
-        // ── NORMAL MODE: server-side cursor pagination ───────────────────
-        const allWhereConstraints = [...filterConstraints, ...dateConstraints];
-        const orderConstraint = (dateFrom || dateTo)
-          ? orderBy('saleDate', 'desc')
-          : orderBy('createdAt', 'desc');
-
-        const constraints = [orderConstraint, ...allWhereConstraints, limit(PAGE_SIZE)];
-        if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
-
-        const [snap, countSnap] = await Promise.all([
-          getDocs(query(collection(db, 'sales'), ...constraints)),
-          getCountFromServer(query(collection(db, 'sales'), orderConstraint, ...allWhereConstraints)),
-        ]);
-        if (!active) return;
-
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
-        setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] || null }));
-
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load sales: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    run();
-    return () => { active = false; };
-  }, [db, page, paymentFilter, invoiceFilter, deliveryFilter, dateFrom, dateTo, debouncedSearch, refreshKey]);
+  const { rows, loading, error, total, page, setPage, refresh } = usePagedCollection(
+    db, 'sales', businessListOptions('sales', { search, paymentFilter, invoiceFilter, deliveryFilter, dateFrom, dateTo })
+  );
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     try {
-      const saleSnap = await getDoc(doc(db, 'sales', deleteId));
+      const saleSnap = await getDoc(doc(db, 'sales', deleteId), { ttlMs: 0 });
       if (saleSnap.exists()) await reverseSaleInventory(db, saleSnap.data().items || []);
       await deleteDoc(doc(db, 'sales', deleteId));
       toast.success('Sale deleted & inventory restored');
       setDeleteId(null);
-      setCursorMap({});
+
       setPage(0);
-      setRefreshKey(k => k + 1);
+      refresh();
     } catch (e) {
       toast.error('Failed to delete sale: ' + e.message);
     }
@@ -221,7 +111,6 @@ const SalesList = () => {
   };
 
   const hasDateFilter   = dateFrom || dateTo;
-  const canSearch       = isSearchableRange(dateFrom, dateTo);
   const activeFilterCount = [
     paymentFilter  !== 'all',
     invoiceFilter  !== 'all',
@@ -231,6 +120,7 @@ const SalesList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} search={search} />
 
       {/* ── Header ── */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
@@ -278,22 +168,17 @@ const SalesList = () => {
       {/* ── Search + Filter Card ── */}
       <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2 }}>
         <Box sx={{ p: 2 }}>
-          {/* Search bar — enabled only when date range ≤ 31 days */}
+          {/* Search across all dates, preserving the selected filters. */}
           <TextField
             fullWidth
             size="small"
-            placeholder={
-              canSearch
-                ? 'Search by invoice #, customer name or phone…'
-                : 'Select a date range (≤ 1 month) to enable search'
-            }
+            placeholder="Search by invoice #, customer name or phone…"
             value={search}
             onChange={e => handleSearch(e.target.value)}
-            disabled={!canSearch}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Search fontSize="small" color={canSearch ? 'inherit' : 'disabled'} />
+                  <Search fontSize="small" color="inherit" />
                 </InputAdornment>
               ),
               endAdornment: search ? (
@@ -305,7 +190,7 @@ const SalesList = () => {
             sx={{
               mb: 1.5,
               '& .MuiOutlinedInput-root': {
-                bgcolor: canSearch ? 'background.paper' : 'action.disabledBackground',
+                bgcolor: 'background.paper',
               },
             }}
           />
@@ -414,7 +299,7 @@ const SalesList = () => {
             </Typography>
             <Typography variant="caption" color="text.secondary">
               · {total} result{total !== 1 ? 's' : ''}
-              {canSearch && ' · search enabled'}
+              {' · search enabled'}
             </Typography>
             <IconButton size="small" onClick={clearDateRange} sx={{ ml: 'auto', p: 0.25 }}>
               <Clear fontSize="small" />
@@ -455,8 +340,8 @@ const SalesList = () => {
                     <TableRow>
                       <TableCell colSpan={isMobile ? 5 : 8} align="center" sx={{ py: 6 }}>
                         <Typography color="text.secondary">
-                          {debouncedSearch
-                            ? `No sales matching "${debouncedSearch}"`
+                          {search
+                            ? `No sales matching "${search}"`
                             : hasDateFilter
                               ? 'No sales found for the selected date range'
                               : 'No sales found'}
@@ -527,7 +412,7 @@ const SalesList = () => {
           </Table>
         </TableContainer>
         <TablePagination
-          component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+          component="div" count={total ?? 0} page={page} rowsPerPage={PAGE_SIZE}
           onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]}
         />
       </Card>

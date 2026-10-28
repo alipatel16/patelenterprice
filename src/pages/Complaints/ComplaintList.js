@@ -1,4 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { fetchAggregate, subscribeInvalidation } from '../../data/query';
+import { deleteRecord as deleteDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions, complaintUrgency as getUrgency } from '../../utils/businessListQueries';
+import { useState, useEffect } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -11,17 +16,14 @@ import {
   AccountTree, Error as ErrorIcon, Schedule, NotificationsActive,
   InfoOutlined,
 } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getCountFromServer, where,
-} from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const STATUS_CONFIG = {
   open:        { label: 'Open',        color: 'error'   },
@@ -34,30 +36,6 @@ const StatusChip = ({ status }) => {
   const c = STATUS_CONFIG[status] || STATUS_CONFIG.open;
   return <Chip label={c.label} color={c.color} size="small" />;
 };
-
-// ─── Urgency helpers ──────────────────────────────────────────────────────────
-const getUrgency = (row) => {
-  if (!row.expectedResolutionDate || row.status === 'resolved' || row.status === 'closed')
-    return 'normal';
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const due = new Date(row.expectedResolutionDate); due.setHours(0, 0, 0, 0);
-  const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0)   return 'overdue';
-  if (diffDays === 0) return 'due_today';
-  if (diffDays <= 4)  return 'due_soon';
-  return 'normal';
-};
-
-const URGENCY_ORDER = { overdue: 0, due_today: 1, due_soon: 2, normal: 3 };
-const sortByUrgency = rows =>
-  [...rows].sort((a, b) => URGENCY_ORDER[getUrgency(a)] - URGENCY_ORDER[getUrgency(b)]);
-
-const sortByCreatedAt = rows =>
-  [...rows].sort((a, b) => {
-    const ta = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
-    const tb = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
-    return tb - ta;
-  });
 
 const URGENCY_CONFIG = {
   overdue:   { label: 'Overdue',    color: 'error',   bg: '#fef2f2', border: '#ef4444', icon: '🔴', leftBorder: '#ef4444' },
@@ -85,9 +63,9 @@ const UrgencySummaryBar = ({ rows, urgencyFilter, onFilter }) => {
   return (
     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
       {[
-        { key: 'overdue',   label: 'Overdue',    count: counts.overdue,   color: '#ef4444', bg: '#fef2f2', icon: <ErrorIcon sx={{ fontSize: 16, color: '#ef4444' }} /> },
-        { key: 'due_today', label: 'Due Today',  count: counts.due_today, color: '#f97316', bg: '#fff7ed', icon: <NotificationsActive sx={{ fontSize: 16, color: '#f97316' }} /> },
-        { key: 'due_soon',  label: 'Due in ≤4d', count: counts.due_soon,  color: '#eab308', bg: '#fefce8', icon: <Schedule sx={{ fontSize: 16, color: '#eab308' }} /> },
+        { key: 'overdue',   label: 'Overdue (page)',    count: counts.overdue,   color: '#ef4444', bg: '#fef2f2', icon: <ErrorIcon sx={{ fontSize: 16, color: '#ef4444' }} /> },
+        { key: 'due_today', label: 'Due Today (page)',  count: counts.due_today, color: '#f97316', bg: '#fff7ed', icon: <NotificationsActive sx={{ fontSize: 16, color: '#f97316' }} /> },
+        { key: 'due_soon',  label: 'Due in ≤4d (page)', count: counts.due_soon,  color: '#eab308', bg: '#fefce8', icon: <Schedule sx={{ fontSize: 16, color: '#eab308' }} /> },
       ].map(({ key, label, count, color, bg, icon }) => (
         <Box key={key} onClick={() => onFilter(urgencyFilter === key ? 'all' : key)}
           sx={{
@@ -237,77 +215,23 @@ const DeleteDialog = ({ open, onClose, onConfirm }) => (
 // TAB 1 & 2 — ACTIVE COMPLAINTS (Open / In Progress)
 // ═══════════════════════════════════════════════════════════════════════════════
 const ActiveComplaintsTab = ({ db, status, navigate, isMobile, onRefreshCounts }) => {
-  const [allDocs, setAllDocs]       = useState([]);
-  const [loading, setLoading]       = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  const [page, setPage]                   = useState(0);
-  const [search, setSearch]               = useState('');
-  const [debouncedSearch, setDebSearch]   = useState('');
-  const [assigneeFilter, setAssignee]     = useState('all');
-  const [urgencyFilter, setUrgency]       = useState('all');
-  const [showFilters, setShowFilters]     = useState(false);
-  const [deleteId, setDeleteId]           = useState(null);
-  const searchTimer = useRef(null);
-
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    setLoading(true);
-    getDocs(query(
-      collection(db, 'complaints'),
-      where('status', '==', status)
-    ))
-      .then(snap => {
-        if (!active) return;
-        const docs = sortByCreatedAt(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setAllDocs(docs);
-      })
-      .catch(e => {
-        if (!active) return;
-        console.error('ActiveComplaintsTab error:', e);
-        toast.error('Failed to load complaints');
-      })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [db, status, refreshKey]);
-
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { setDebSearch(val); setPage(0); }, 350);
-  };
-
-  const handleUrgencyFilter = key => { setUrgency(key); setPage(0); };
-
-  const filtered = useMemo(() => {
-    let list = allDocs;
-    if (assigneeFilter !== 'all') list = list.filter(r => r.assigneeType === assigneeFilter);
-    if (urgencyFilter  !== 'all') list = list.filter(r => getUrgency(r) === urgencyFilter);
-    if (debouncedSearch.trim()) {
-      const s = debouncedSearch.toLowerCase();
-      list = list.filter(r =>
-        (r.complaintNumber || '').toLowerCase().includes(s) ||
-        (r.customerName    || '').toLowerCase().includes(s) ||
-        (r.customerPhone   || '').toLowerCase().includes(s) ||
-        (r.title           || '').toLowerCase().includes(s) ||
-        (r.brand           || '').toLowerCase().includes(s)
-      );
-    }
-    return sortByUrgency(list);
-  }, [allDocs, assigneeFilter, urgencyFilter, debouncedSearch]);
-
-  const pageRows = useMemo(
-    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtered, page]
+  const [search, setSearch] = useState('');
+  const [assigneeFilter, setAssignee] = useState('all');
+  const [urgencyFilter, setUrgency] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const { rows: pageRows, total, loading, error, page, setPage, refresh } = usePagedCollection(
+    db, 'complaints', businessListOptions('complaints', { search, status, assigneeFilter, urgencyFilter })
   );
+  const handleSearch = setSearch;
+  const handleUrgencyFilter = setUrgency;
 
   const handleDelete = async () => {
     try {
       await deleteDoc(doc(db, 'complaints', deleteId));
       toast.success('Complaint deleted');
       setDeleteId(null);
-      setRefreshKey(k => k + 1);
+      refresh();
       onRefreshCounts();
     } catch { toast.error('Delete failed'); }
   };
@@ -316,7 +240,8 @@ const ActiveComplaintsTab = ({ db, status, navigate, isMobile, onRefreshCounts }
 
   return (
     <Box>
-      <UrgencySummaryBar rows={allDocs} urgencyFilter={urgencyFilter} onFilter={handleUrgencyFilter} />
+      <QueryStatus error={error} loading={loading} search={search} />
+      <UrgencySummaryBar rows={pageRows} urgencyFilter={urgencyFilter} onFilter={handleUrgencyFilter} />
 
       <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2, p: 2 }}>
         <Box display="flex" gap={1} alignItems="center">
@@ -375,8 +300,8 @@ const ActiveComplaintsTab = ({ db, status, navigate, isMobile, onRefreshCounts }
               ? <Box textAlign="center" py={6}><BugReport sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} /><Typography color="text.secondary">No complaints found</Typography></Box>
               : pageRows.map(row => <MobileComplaintCard key={row.id} row={row} navigate={navigate} onDelete={setDeleteId} />)
           }
-          {filtered.length > PAGE_SIZE && (
-            <TablePagination component="div" count={filtered.length} page={page}
+          {total > PAGE_SIZE && (
+            <TablePagination component="div" count={total ?? 0} page={page}
               onPageChange={(_, p) => setPage(p)} rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
               sx={{ '.MuiTablePagination-toolbar': { px: 0 } }} />
           )}
@@ -411,7 +336,7 @@ const ActiveComplaintsTab = ({ db, status, navigate, isMobile, onRefreshCounts }
               </TableBody>
             </Table>
           </TableContainer>
-          <TablePagination component="div" count={filtered.length} page={page}
+          <TablePagination component="div" count={total ?? 0} page={page}
             onPageChange={(_, p) => setPage(p)} rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
         </Card>
       )}
@@ -422,109 +347,15 @@ const ActiveComplaintsTab = ({ db, status, navigate, isMobile, onRefreshCounts }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TAB 3 — HISTORY (Resolved / Closed)
-//
-// ✅ TRUE SERVER-SIDE PAGINATION using startAfter cursors.
-//    Reads exactly PAGE_SIZE (10) docs per page — never more.
-//    getCountFromServer for total badge → 0 read cost (count queries are free).
-//    Search is client-side within the current page of 10 rows.
-//
-// ⚠️  REQUIRES a Firestore composite index:
-//    Collection : complaints
-//    Fields     : status (Ascending)  +  createdAt (Descending)
-//    When you first load this tab, Firebase console will log a URL
-//    to create the index automatically — click it once.
-// ═══════════════════════════════════════════════════════════════════════════════
+// TAB 3 — HISTORY: indexed server search and cursor pagination.
 const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
-  const [rows, setRows]           = useState([]);
-  const [loading, setLoading]     = useState(false);
-  const [totalCount, setTotal]    = useState(0);
-  const [page, setPage]           = useState(0);
-  // cursors[n] = last Firestore doc snapshot of page n (used as startAfter for page n+1)
-  const [cursors, setCursors]     = useState({});
-  const cursorsRef                = useRef({});
-  const [refreshKey, setRefresh]  = useState(0);
-  const [deleteId, setDeleteId]   = useState(null);
-  const [search, setSearch]       = useState('');
-  const [debouncedSearch, setDeb] = useState('');
-  const searchTimer               = useRef(null);
-
-  // Keep ref in sync so the fetch effect always reads the latest cursors
-  // without needing cursors in its dependency array (avoids infinite loops).
-  useEffect(() => { cursorsRef.current = cursors; }, [cursors]);
-
-  // ── Fetch total count (FREE — count queries don't bill reads) ──────────────
-  useEffect(() => {
-    if (!db) return;
-    getCountFromServer(
-      query(collection(db, 'complaints'), where('status', 'in', ['resolved', 'closed']))
-    )
-      .then(s => setTotal(s.data().count))
-      .catch(() => {});
-  }, [db, refreshKey]);
-
-  // ── Fetch exactly PAGE_SIZE docs for the current page ─────────────────────
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    setLoading(true);
-
-    // Build constraints:
-    //   where + orderBy → requires composite index (status ASC + createdAt DESC)
-    const constraints = [
-      where('status', 'in', ['resolved', 'closed']),
-      orderBy('createdAt', 'desc'),
-      limit(PAGE_SIZE),
-    ];
-
-    // For page > 0 use the last doc of the previous page as the cursor
-    const prevCursor = cursorsRef.current[page - 1];
-    if (page > 0 && prevCursor) constraints.push(startAfter(prevCursor));
-
-    getDocs(query(collection(db, 'complaints'), ...constraints))
-      .then(snap => {
-        if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        // Store last doc of this page so the NEXT page can use it as cursor
-        if (snap.docs.length > 0) {
-          const lastDoc = snap.docs[snap.docs.length - 1];
-          setCursors(prev => ({ ...prev, [page]: lastDoc }));
-        }
-      })
-      .catch(e => {
-        if (!active) return;
-        console.error('HistoryComplaintsTab error:', e);
-        toast.error('Failed to load history');
-      })
-      .finally(() => { if (active) setLoading(false); });
-
-    return () => { active = false; };
-  }, [db, page, refreshKey]); // cursors intentionally excluded — read via ref
-
-  // ── Search (client-side within the current page of 10 rows) ───────────────
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => setDeb(val), 350);
-  };
-
-  const displayRows = useMemo(() => {
-    if (!debouncedSearch.trim()) return rows;
-    const s = debouncedSearch.toLowerCase();
-    return rows.filter(r =>
-      (r.complaintNumber || '').toLowerCase().includes(s) ||
-      (r.customerName    || '').toLowerCase().includes(s) ||
-      (r.customerPhone   || '').toLowerCase().includes(s) ||
-      (r.title           || '').toLowerCase().includes(s)
-    );
-  }, [rows, debouncedSearch]);
-
-  // ── Page change ────────────────────────────────────────────────────────────
-  const handlePageChange = (_, newPage) => {
-    setSearch('');
-    setDeb('');
-    setPage(newPage);
-  };
+  const [deleteId, setDeleteId] = useState(null);
+  const [search, setSearch] = useState('');
+  const { rows: displayRows, total: totalCount, loading, error, page, setPage, refresh } = usePagedCollection(
+    db, 'complaints', businessListOptions('complaints', { search, status: 'history' })
+  );
+  const handleSearch = setSearch;
+  const handlePageChange = (_, nextPage) => setPage(nextPage);
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
@@ -532,22 +363,19 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
       await deleteDoc(doc(db, 'complaints', deleteId));
       toast.success('Complaint deleted');
       setDeleteId(null);
-      // Reset all cursors and return to page 0 so pagination stays consistent
-      setCursors({});
-      cursorsRef.current = {};
-      setPage(0);
-      setRefresh(k => k + 1); // triggers both count re-fetch and page-0 re-fetch
+      refresh();
       onRefreshCounts();
     } catch { toast.error('Delete failed'); }
   };
 
   return (
     <Box>
+      <QueryStatus error={error} loading={loading} search={search} />
       {/* Search + info banner */}
       <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2, p: 2 }}>
         <TextField
           fullWidth
-          placeholder="Search within this page (complaint #, customer, title)..."
+          placeholder="Search complaint #, customer, title..."
           value={search}
           onChange={e => handleSearch(e.target.value)}
           size="small"
@@ -559,7 +387,7 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
         <Box display="flex" alignItems="center" gap={0.5} mt={1}>
           <InfoOutlined sx={{ fontSize: 13, color: 'text.disabled' }} />
           <Typography variant="caption" color="text.disabled">
-            Search filters within the current page · {totalCount} total resolved/closed complaints
+            Search all resolved/closed complaints · {totalCount} total resolved/closed complaints
           </Typography>
         </Box>
       </Card>
@@ -576,7 +404,7 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
                 <Box textAlign="center" py={6}>
                   <BugReport sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                   <Typography color="text.secondary">
-                    {debouncedSearch ? 'No matches on this page' : 'No resolved or closed complaints'}
+                    {search ? 'No matching complaints' : 'No resolved or closed complaints'}
                   </Typography>
                 </Box>
               )
@@ -587,7 +415,7 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
           {totalCount > PAGE_SIZE && (
             <TablePagination
               component="div"
-              count={totalCount}
+              count={totalCount ?? 0}
               page={page}
               onPageChange={handlePageChange}
               rowsPerPage={PAGE_SIZE}
@@ -623,7 +451,7 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
                         <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                           <BugReport sx={{ fontSize: 48, color: 'text.disabled', display: 'block', mx: 'auto', mb: 1 }} />
                           <Typography color="text.secondary">
-                            {debouncedSearch ? 'No matches on this page' : 'No resolved or closed complaints'}
+                            {search ? 'No matching complaints' : 'No resolved or closed complaints'}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -637,7 +465,7 @@ const HistoryComplaintsTab = ({ db, navigate, isMobile, onRefreshCounts }) => {
           </TableContainer>
           <TablePagination
             component="div"
-            count={totalCount}
+            count={totalCount ?? 0}
             page={page}
             onPageChange={handlePageChange}
             rowsPerPage={PAGE_SIZE}
@@ -663,20 +491,27 @@ const ComplaintList = () => {
   const [tab, setTab] = useState(0);
   const [tabCounts, setTabCounts] = useState({ open: 0, in_progress: 0, history: 0 });
   const [countsKey, setCountsKey] = useState(0);
+  const [countsError, setCountsError] = useState(null);
+
+  useEffect(() => subscribeInvalidation(db, names => {
+    if (!names || names.includes('complaints')) {
+      setTabCounts({ open: 0, in_progress: 0, history: 0 });
+      setCountsKey(key => key + 1);
+    }
+  }), [db]);
 
   useEffect(() => {
     if (!db) return;
+    let active = true;
+    setCountsError(null);
     Promise.all([
-      getCountFromServer(query(collection(db, 'complaints'), where('status', '==', 'open'))),
-      getCountFromServer(query(collection(db, 'complaints'), where('status', '==', 'in_progress'))),
-      getCountFromServer(query(collection(db, 'complaints'), where('status', 'in', ['resolved', 'closed']))),
-    ]).then(([openSnap, ipSnap, histSnap]) => {
-      setTabCounts({
-        open:        openSnap.data().count,
-        in_progress: ipSnap.data().count,
-        history:     histSnap.data().count,
-      });
-    }).catch(() => {});
+      fetchAggregate(db, 'complaints', { filters: [['status', '==', 'open']] }),
+      fetchAggregate(db, 'complaints', { filters: [['status', '==', 'in_progress']] }),
+      fetchAggregate(db, 'complaints', { filters: [['status', 'in', ['resolved', 'closed']]] }),
+    ]).then(([open, inProgress, history]) => {
+      if (active) setTabCounts({ open: open.count, in_progress: inProgress.count, history: history.count });
+    }).catch(e => { if (active) setCountsError(e); });
+    return () => { active = false; };
   }, [db, countsKey]);
 
   const handleRefreshCounts = () => setCountsKey(k => k + 1);
@@ -693,6 +528,7 @@ const ComplaintList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={countsError} />
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={1}>
         <Box display="flex" alignItems="center" gap={1}>

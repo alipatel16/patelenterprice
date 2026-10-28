@@ -1,12 +1,8 @@
-// src/pages/Gifts/GiftInvoiceList.js
-//
-// SEARCH STRATEGY
-// No month selected  →  server-side cursor pagination, search disabled.
-// Month selected     →  fetch all gift invoices with date in that month,
-//                        filter by invoice#/customer/gift-set in memory.
-// NOTE: Uses 'date' field (YYYY-MM-DD string) for month range queries.
-
-import React, { useState, useEffect, useRef } from 'react';
+import { deleteRecord as deleteDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions } from '../../utils/businessListQueries';
+import { useState } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, TablePagination,
@@ -14,10 +10,7 @@ import {
   DialogContent, DialogActions, useTheme, useMediaQuery, Stack, Tooltip,
 } from '@mui/material';
 import { Add, Edit, Delete, CardGiftcard, Print } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getCountFromServer, where,
-} from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -25,17 +18,9 @@ import { formatDate } from '../../utils';
 import MonthSearchBar from '../../components/MonthSearchBar';
 import { printGiftInvoice } from '../../utils/giftInvoicePrint';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 /** Returns { startStr, endStr } as 'YYYY-MM-DD' strings for the full month. */
-const getMonthDateStrings = (yearMonth) => {
-  const [y, m] = yearMonth.split('-').map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  return {
-    startStr: `${yearMonth}-01`,
-    endStr:   `${yearMonth}-${String(lastDay).padStart(2, '0')}`,
-  };
-};
 
 const DeliveryProgress = ({ items = [] }) => {
   const total     = items.length;
@@ -115,97 +100,31 @@ const GiftInvoiceList = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows]       = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal]     = useState(0);
-  const [page, setPage]       = useState(0);
-  const [cursorMap, setCursorMap] = useState({});
   const [deleteId, setDeleteId]   = useState(null);
-  const [refreshKey, setRefreshKey] = useState(0);
 
   const [searchMonth,     setSearchMonth]     = useState('');
   const [search,          setSearch]          = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchTimer = useRef(null);
 
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
-  };
+  const handleSearch = setSearch;
 
-  const handleMonthChange = val => {
-    setSearchMonth(val); setSearch(''); setDebouncedSearch(''); setPage(0); setCursorMap({});
-  };
+  const handleMonthChange = setSearchMonth;
 
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    const run = async () => {
-      setLoading(true);
-      try {
-        // ── MONTH SEARCH MODE ────────────────────────────────────────────
-        // Uses 'date' (YYYY-MM-DD string) for month filtering since gift
-        // invoices store the invoice date as a string field.
-        if (searchMonth) {
-          const { startStr, endStr } = getMonthDateStrings(searchMonth);
-          const snap = await getDocs(query(
-            collection(db, 'giftInvoices'),
-            where('date', '>=', startStr),
-            where('date', '<=', endStr),
-            orderBy('date', 'desc'),
-          ));
-          if (!active) return;
-          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          if (debouncedSearch.trim()) {
-            const s = debouncedSearch.toLowerCase();
-            all = all.filter(r =>
-              (r.invoiceNumber  || '').toLowerCase().includes(s) ||
-              (r.customerName   || '').toLowerCase().includes(s) ||
-              (r.customerPhone  || '').includes(s)              ||
-              (r.giftSetName    || '').toLowerCase().includes(s)
-            );
-          }
-          setTotal(all.length);
-          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
-          return;
-        }
-
-        // ── NORMAL CURSOR PAGINATION ─────────────────────────────────────
-        const constraints = [orderBy('createdAt', 'desc'), limit(PAGE_SIZE)];
-        if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
-
-        const [snap, countSnap] = await Promise.all([
-          getDocs(query(collection(db, 'giftInvoices'), ...constraints)),
-          getCountFromServer(collection(db, 'giftInvoices')),
-        ]);
-        if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
-        if (snap.docs.length > 0) setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load gift invoices');
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    run();
-    return () => { active = false; };
-  }, [db, page, searchMonth, debouncedSearch, refreshKey]);
+  const { rows, loading, error, total, page, setPage, refresh } = usePagedCollection(
+    db, 'giftInvoices', businessListOptions('giftInvoices', { search, month: searchMonth })
+  );
 
   const handleDelete = async () => {
     try {
       await deleteDoc(doc(db, 'giftInvoices', deleteId));
       toast.success('Gift invoice deleted');
       setDeleteId(null);
-      setCursorMap({}); setPage(0); setRefreshKey(k => k + 1);
+       setPage(0); refresh();
     } catch (e) { toast.error('Delete failed'); }
   };
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} search={search} />
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={1}>
         <Box display="flex" alignItems="center" gap={1}>
           <CardGiftcard color="secondary" />
@@ -248,8 +167,8 @@ const GiftInvoiceList = () => {
                 <Box textAlign="center" py={6}>
                   <CardGiftcard sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                   <Typography color="text.secondary">
-                    {searchMonth && debouncedSearch
-                      ? `No invoices matching "${debouncedSearch}"`
+                    {searchMonth && search
+                      ? `No invoices matching "${search}"`
                       : searchMonth ? 'No gift invoices in this month'
                       : 'No gift invoices found'}
                   </Typography>
@@ -260,7 +179,7 @@ const GiftInvoiceList = () => {
                 ))
           }
           {rows.length > 0 && (
-            <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+            <TablePagination component="div" count={total ?? 0} page={page} rowsPerPage={PAGE_SIZE}
               onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
           )}
         </Box>
@@ -293,8 +212,8 @@ const GiftInvoiceList = () => {
                       <TableRow>
                         <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                           <Typography color="text.secondary">
-                            {searchMonth && debouncedSearch
-                              ? `No invoices matching "${debouncedSearch}"`
+                            {searchMonth && search
+                              ? `No invoices matching "${search}"`
                               : searchMonth ? 'No gift invoices in this month'
                               : 'No gift invoices found'}
                           </Typography>
@@ -344,7 +263,7 @@ const GiftInvoiceList = () => {
               </TableBody>
             </Table>
           </TableContainer>
-          <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+          <TablePagination component="div" count={total ?? 0} page={page} rowsPerPage={PAGE_SIZE}
             onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
         </Card>
       )}

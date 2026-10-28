@@ -1,0 +1,310 @@
+[
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "users",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "role",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emi_installments",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "saleId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "installmentNumber",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "attendanceLogs",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "exchangeReceived",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentStatus",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasExchange",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "isDelivered",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  }
+]

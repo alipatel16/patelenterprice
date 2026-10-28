@@ -1,0 +1,33 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { act } from 'react';
+import { Simulate } from 'react-dom/test-utils';
+import FirestoreAutocomplete from './FirestoreAutocomplete';
+import { fetchPage } from '../data/query';
+jest.mock('../data/query', () => ({ fetchPage: jest.fn(), subscribeInvalidation: () => () => {}, invalidateCollections: jest.fn(), queryKey: value => JSON.stringify(value) }));
+const db = {};
+test('controlled edit choice is retained, search is debounced and failures are visible', async () => {
+  global.IS_REACT_ACT_ENVIRONMENT = true; jest.useFakeTimers();
+  const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
+  const value = { id: 'chosen', name: 'Selected Customer' };
+  fetchPage.mockRejectedValue(new Error('Search is not ready'));
+  await act(async () => root.render(<FirestoreAutocomplete db={db} collectionName="customers" value={value} label="Customer" onChange={() => {}} />));
+  const input = host.querySelector('input'); expect(input.value).toBe('Selected Customer');
+  await act(async () => Simulate.change(input, { target: { value: 'a' } }));
+  await act(async () => jest.advanceTimersByTime(400)); expect(fetchPage).not.toHaveBeenCalled();
+  await act(async () => Simulate.change(input, { target: { value: 'al' } }));
+  await act(async () => jest.advanceTimersByTime(299)); expect(fetchPage).not.toHaveBeenCalled();
+  await act(async () => jest.advanceTimersByTime(1)); expect(host.textContent).toContain('Search is not ready');
+  act(() => root.unmount()); host.remove(); jest.useRealTimers();
+});
+test('caps dropdown options including the controlled selection at 15', async () => {
+  global.IS_REACT_ACT_ENVIRONMENT = true; jest.useFakeTimers();
+  const host = document.createElement('div'), root = createRoot(host), notify = jest.fn();
+  fetchPage.mockResolvedValue({ rows: Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `Person ${i}` })), total: null, hasNext: true, lastDoc: {} });
+  await act(async () => root.render(<FirestoreAutocomplete db={db} collectionName="customers" value={{ id: 'chosen', name: 'Chosen' }} label="Customer" onChange={() => {}} onOptionsChange={notify} maxResults={100} />));
+  await act(async () => Simulate.change(host.querySelector('input'), { target: { value: 'pe' } }));
+  await act(async () => jest.advanceTimersByTime(300));
+  const visible = notify.mock.calls.at(-1)[0]; expect(visible).toHaveLength(15); expect(visible[0].id).toBe('chosen');
+  expect(fetchPage.mock.calls.at(-1)[2]).toMatchObject({ pageSize: 15, includeTotal: false });
+  act(() => root.unmount()); jest.useRealTimers();
+});

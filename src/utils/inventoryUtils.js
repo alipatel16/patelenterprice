@@ -1,3 +1,4 @@
+import { addRecord as addDoc, mutateRecord } from '../data/writes';
 /**
  * Inventory Delta Utilities
  *
@@ -12,10 +13,7 @@
  *   +300 = 300 instead of the correct 200).
  */
 
-import {
-  collection, query, where, getDocs,
-  addDoc, updateDoc, doc, serverTimestamp,
-} from 'firebase/firestore';
+import { collection, query, where, limit, getDocs, doc, serverTimestamp } from 'firebase/firestore';
 
 // ── Build productId → totalQty map from an item array ─────────────────────
 export const buildQtyMap = (items = []) => {
@@ -66,10 +64,12 @@ export const applyInventoryDeltas = async (db, oldItems, newItems, type) => {
 
     if (delta === 0) continue; // nothing changed for this product
 
-    const invQ    = query(collection(db, 'inventory'), where('productId', '==', productId));
+    const invQ    = query(collection(db, 'inventory'), where('productId', '==', productId), limit(2));
     const invSnap = await getDocs(invQ);
 
-    if (invSnap.empty) {
+    if (invSnap.docs.length > 1) throw new Error(`Multiple inventory mappings for product ${productId}; administrator review required.`);
+
+    if (invSnap.docs.length === 0) {
       // Only auto-create an inventory record for a brand-new purchase
       if (type === 'purchase' && delta > 0) {
         await addDoc(collection(db, 'inventory'), {
@@ -86,22 +86,21 @@ export const applyInventoryDeltas = async (db, oldItems, newItems, type) => {
     }
 
     const invDoc = invSnap.docs[0];
-    const data   = invDoc.data();
 
     if (type === 'sale') {
       // More sold → less stock; fewer sold → more stock
-      await updateDoc(doc(db, 'inventory', invDoc.id), {
+      await mutateRecord(doc(db, 'inventory', invDoc.id), data => ({
         stock:   Math.max(0, (data.stock   || 0) - delta),
         soldQty: Math.max(0, (data.soldQty || 0) + delta),
         updatedAt: serverTimestamp(),
-      });
+      }));
     } else {
       // More purchased → more stock; fewer purchased → less stock
-      await updateDoc(doc(db, 'inventory', invDoc.id), {
+      await mutateRecord(doc(db, 'inventory', invDoc.id), data => ({
         stock:        Math.max(0, (data.stock        || 0) + delta),
         purchasedQty: Math.max(0, (data.purchasedQty || 0) + delta),
         updatedAt:    serverTimestamp(),
-      });
+      }));
     }
   }
 };

@@ -1,16 +1,9 @@
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
 import React, { useState, useEffect } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  IconButton, Alert, CircularProgress, Chip, Stack, Divider,
-  InputAdornment,
-} from '@mui/material';
-import {
-  ArrowBack, Save, Delete, AddCircle, AccountTree,
-  DragIndicator, ArrowUpward, ArrowDownward,
-} from '@mui/icons-material';
-import {
-  collection, addDoc, updateDoc, doc, getDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, IconButton, Alert, CircularProgress, Chip, Stack, InputAdornment } from '@mui/material';
+import { ArrowBack, Save, Delete, AddCircle, AccountTree, ArrowUpward, ArrowDownward } from '@mui/icons-material';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';

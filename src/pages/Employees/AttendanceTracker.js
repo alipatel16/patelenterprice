@@ -1,3 +1,9 @@
+import QueryStatus from '../../components/QueryStatus';
+import { getKnownSnapshot as getDoc } from './employeeData';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import EmployeePageControls from './EmployeePageControls';
+import { employeeQuery, loadAttendanceMonths } from './employeeData';
+import { updateRecord } from '../../data/writes';
 // src/pages/Employees/AttendanceTracker.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -12,10 +18,7 @@ import {
   Today, CalendarMonth, Refresh, ArrowBack, ArrowForward,
   CheckCircle, Cancel, HourglassEmpty, BeachAccess, AccessTime,
 } from '@mui/icons-material';
-import {
-  collection, query, where, getDocs, orderBy, doc, getDoc,
-  limit, startAfter, getCountFromServer, writeBatch,
-} from 'firebase/firestore';
+import { where, doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { formatTime, formatDuration, getTodayStr } from './employeeConstants';
@@ -38,86 +41,33 @@ const MONTH_NAMES  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 // logoutTime = that date at 20:00:00 local time.
 // Called once when the daily view mounts / refreshes.
 // ─────────────────────────────────────────────────────────────────────────────
-async function autoFillMissingLogouts(db) {
+async function autoFillMissingLogouts(db, logsByUser) {
   const today = getTodayStr();
-  const now   = new Date();
-  const year  = now.getFullYear();
-  const month = now.getMonth();
-
-  const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-
-  try {
-    // Fetch all logs this month that have loginTime but no logoutTime
-    // and are not a leave status, and are before today
-    const snap = await getDocs(
-      query(
-        collection(db, 'attendanceLogs'),
-        where('date', '>=', monthStart),
-        where('date', '<',  today),       // strictly before today
-      )
-    );
-
-    const docsToFix = snap.docs.filter(d => {
-      const data = d.data();
-      return (
-        data.loginTime &&          // has a clock-in
-        !data.logoutTime &&        // no clock-out yet
-        data.status !== 'leave'    // not a leave entry
-      );
+  const pending = Object.values(logsByUser).flat().filter(log => log.date < today && log.loginTime && !log.logoutTime && log.status !== 'leave');
+  // One visible page contains at most 15 × 31 day summaries. Apply a bounded
+  // batch per refresh; later visits resume naturally from the source summaries.
+  for (const log of pending.slice(0, 15)) {
+    const [y, m, d] = log.date.split('-').map(Number);
+    const logoutISO = new Date(y, m - 1, d, 20, 0, 0, 0).toISOString();
+    await updateRecord(doc(db, 'attendanceLogs', log.id), {
+      logoutTime: logoutISO, logoutLocation: null, autoFilledLogout: true,
+      breaks: (log.breaks || []).map(b => b.startTime && !b.endTime ? { ...b, endTime: logoutISO } : b), updatedAt: logoutISO,
     });
-
-    if (docsToFix.length === 0) return;
-
-    // Firestore writeBatch supports up to 500 ops
-    const batch = writeBatch(db);
-
-    docsToFix.forEach(docSnap => {
-      const data  = docSnap.data();
-      const date  = data.date;                          // "YYYY-MM-DD"
-      const [y, m, d] = date.split('-').map(Number);
-
-      // Build ISO string for 20:00:00 local time on that date
-      const logoutDate  = new Date(y, m - 1, d, 20, 0, 0, 0);
-      const logoutISO   = logoutDate.toISOString();
-
-      // Also close any open break that was left active
-      const breaks = (data.breaks || []).map(b =>
-        b.startTime && !b.endTime
-          ? { ...b, endTime: logoutISO }
-          : b
-      );
-
-      batch.update(docSnap.ref, {
-        logoutTime:     logoutISO,
-        logoutLocation: null,          // no location — auto-filled
-        autoFilledLogout: true,        // flag so admin knows it was auto-filled
-        breaks,
-        updatedAt: logoutISO,
-      });
-    });
-
-    await batch.commit();
-
-    if (docsToFix.length > 0) {
-      toast.info(
-        `Auto-filled logout (8:00 PM) for ${docsToFix.length} incomplete day${docsToFix.length > 1 ? 's' : ''}`,
-        { autoClose: 4000 }
-      );
-    }
-  } catch (e) {
-    // Non-critical — log silently; don't block the UI
-    console.warn('[autoFillMissingLogouts]', e.message);
   }
+  if (pending.length) toast.info(`Auto-filled ${Math.min(15, pending.length)} logouts for this page${pending.length > 15 ? '; refresh to continue' : ''}`);
 }
 
 // ── Daily Status Card ─────────────────────────────────────────────────────────
 const AttendanceDailyView = ({ db }) => {
-  const [employees,  setEmployees]  = useState([]);
+  const [search, setSearch] = useState('');
+  const employeePage = usePagedCollection(db, 'users', employeeQuery(search));
+  const { rows: employees, page, total, setPage, refresh } = employeePage;
   const [logs,       setLogs]       = useState({});
+  const [summaryError, setSummaryError] = useState(null);
   const [loading,    setLoading]    = useState(false);
-  const [page,       setPage]       = useState(0);
-  const [total,      setTotal]      = useState(0);
-  const [cursorMap,  setCursorMap]  = useState({});
+
+
+
   const [detailEmp,  setDetailEmp]  = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const theme    = useTheme();
@@ -125,61 +75,19 @@ const AttendanceDailyView = ({ db }) => {
 
   const today = getTodayStr();
 
-  // ── Auto-fill missing logouts ONCE per mount/refresh ──────────────────────
   useEffect(() => {
     if (!db) return;
-    autoFillMissingLogouts(db);
-  }, [db, refreshKey]);   // re-runs on manual refresh too
-
-  // ── Count ──────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!db) return;
-    getCountFromServer(query(collection(db, 'users'), where('role', '==', 'employee')))
-      .then(s => setTotal(s.data().count)).catch(() => {});
-  }, [db, refreshKey]);
-
-  // ── Load page ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        let q;
-        if (page === 0) {
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), limit(PAGE_SIZE));
-        } else {
-          const cursor = cursorMap[page - 1];
-          if (!cursor) return;
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), startAfter(cursor), limit(PAGE_SIZE));
-        }
-        const snap = await getDocs(q);
-        const emps = snap.docs.map(d => ({ id: d.id, ...d.data(), _snap: d }));
-        if (snap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-        }
-        setEmployees(emps);
-
-        // Load today's attendance for these employees
-        const uids = emps.map(e => e.id);
-        if (uids.length > 0) {
-          const logSnap = await getDocs(
-            query(collection(db, 'attendanceLogs'),
-              where('date', '==', today),
-              where('userId', 'in', uids)
-            )
-          );
-          const logMap = {};
-          logSnap.docs.forEach(d => { logMap[d.data().userId] = { id: d.id, ...d.data() }; });
-          setLogs(logMap);
-        }
-      } catch (e) {
-        toast.error('Failed to load: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, page, today, refreshKey]);
+    let active = true;
+    setLogs({}); setSummaryError(null); setLoading(true);
+    loadAttendanceMonths(db, employees.map(e => e.id), today.slice(0, 7))
+      .then(async months => {
+        if (!active) return;
+        setLogs(Object.fromEntries(employees.map(e => [e.id, months[e.id]?.find(day => day.date === today)])));
+        await autoFillMissingLogouts(db, months);
+      }).catch(e => { if (active) setSummaryError(e); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [db, employees, today, refreshKey]);
 
   const getStatus = (emp) => {
     const log = logs[emp.id];
@@ -199,8 +107,11 @@ const AttendanceDailyView = ({ db }) => {
 
   const stats = summaryStats();
 
+  if (summaryError) return <Box><EmployeePageControls search={search} setSearch={setSearch} result={employeePage} /><QueryStatus error={summaryError} loading={false} /><Button onClick={() => window.location.reload()}>Reload summaries</Button></Box>;
   return (
     <Box>
+      <EmployeePageControls search={search} setSearch={setSearch} result={employeePage} />
+      <Typography variant="caption">Status totals cover this employee page.</Typography>
       {/* Summary Cards */}
       <Grid container spacing={2} mb={3}>
         {[
@@ -224,7 +135,7 @@ const AttendanceDailyView = ({ db }) => {
           <Typography variant="subtitle1" fontWeight={700}>
             Today — {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
           </Typography>
-          <IconButton size="small" onClick={() => { setPage(0); setCursorMap({}); setRefreshKey(k => k + 1); }}>
+          <IconButton size="small" onClick={() => { setPage(0); refresh(); setRefreshKey(k => k + 1); }}>
             <Refresh fontSize="small" />
           </IconButton>
         </Box>
@@ -317,8 +228,8 @@ const AttendanceDailyView = ({ db }) => {
               </Table>
             </TableContainer>
             <TablePagination
-              component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); if (p === 0) setCursorMap({}); }}
+              component="div" count={total ?? -1} page={page}
+              onPageChange={(_, p) => { setPage(p); if (p === 0) refresh(); }}
               rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
             />
           </>
@@ -412,8 +323,11 @@ const AttendanceMonthlyView = ({ db }) => {
   const now = new Date();
   const [selYear,   setSelYear]   = useState(now.getFullYear());
   const [selMonth,  setSelMonth]  = useState(now.getMonth());
-  const [employees, setEmployees] = useState([]);
+  const [search, setSearch] = useState('');
+  const employeePage = usePagedCollection(db, 'users', employeeQuery(search));
+  const employees = employeePage.rows;
   const [logMap,    setLogMap]    = useState({});  // { "uid_YYYY-MM-DD": log }
+  const [summaryError, setSummaryError] = useState(null);
   const [loading,   setLoading]   = useState(false);
   const [selEmp,    setSelEmp]    = useState('all');
   const theme    = useTheme();
@@ -421,40 +335,14 @@ const AttendanceMonthlyView = ({ db }) => {
 
   useEffect(() => {
     if (!db) return;
-    getDocs(query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name')))
-      .then(snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-      .catch(() => {});
-  }, [db]);
-
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const startDate   = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-01`;
-        const daysInMonth = getMonthDays(selYear, selMonth);
-        const endDate     = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
-
-        const snap = await getDocs(
-          query(collection(db, 'attendanceLogs'),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate)
-          )
-        );
-        const map = {};
-        snap.docs.forEach(d => {
-          const data = d.data();
-          map[`${data.userId}_${data.date}`] = { id: d.id, ...data };
-        });
-        setLogMap(map);
-      } catch (e) {
-        toast.error('Failed: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, selYear, selMonth]);
+    let active = true;
+    setLogMap({}); setSummaryError(null); setLoading(true);
+    loadAttendanceMonths(db, employees.map(e => e.id), `${selYear}-${String(selMonth + 1).padStart(2, '0')}`)
+      .then(months => { if (active) setLogMap(Object.fromEntries(Object.entries(months).flatMap(([uid, days]) => days.map(log => [`${uid}_${log.date}`, log])))); })
+      .catch(e => { if (active) setSummaryError(e); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [db, employees, selYear, selMonth]);
 
   const daysInMonth = getMonthDays(selYear, selMonth);
   const dayNums     = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -484,8 +372,10 @@ const AttendanceMonthlyView = ({ db }) => {
 
   const filteredEmployees = selEmp === 'all' ? employees : employees.filter(e => e.id === selEmp);
 
+  if (summaryError) return <Box><EmployeePageControls search={search} setSearch={setSearch} result={employeePage} /><QueryStatus error={summaryError} loading={false} /><Button onClick={() => window.location.reload()}>Reload summaries</Button></Box>;
   return (
     <Box>
+      <EmployeePageControls search={search} setSearch={setSearch} result={employeePage} />
       {/* Controls */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
         <Box display="flex" alignItems="center" gap={1}>

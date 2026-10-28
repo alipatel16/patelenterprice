@@ -1,5 +1,8 @@
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { employeeQuery } from './employeeData';
 // src/pages/Employees/EmployeeList.js
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination,
@@ -10,15 +13,11 @@ import {
   Search, Edit, PersonAdd, Refresh, Badge,
   CheckCircle, Block,
 } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter,
-  getDocs, where, getCountFromServer,
-} from 'firebase/firestore';
+
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'react-toastify';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const EmployeeList = () => {
   const { db, isAdmin } = useAuth();
@@ -26,83 +25,9 @@ const EmployeeList = () => {
   const theme  = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows,    setRows]    = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total,   setTotal]   = useState(0);
-  const [page,    setPage]    = useState(0);
-  const [search,  setSearch]  = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [cursorMap, setCursorMap] = useState({});
-  const [refreshKey, setRefreshKey] = useState(0);
-  const searchTimer = useRef(null);
-
-  const handleSearch = (val) => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(val);
-      setPage(0);
-      setCursorMap({});
-    }, 450);
-  };
-
-  // Count
-  useEffect(() => {
-    if (!db) return;
-    const countQuery = query(collection(db, 'users'), where('role', '==', 'employee'));
-    getCountFromServer(countQuery)
-      .then(s => setTotal(s.data().count))
-      .catch(() => {});
-  }, [db, refreshKey]);
-
-  // Load page
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        let q;
-        if (page === 0) {
-          q = query(
-            collection(db, 'users'),
-            where('role', '==', 'employee'),
-            orderBy('name'),
-            limit(PAGE_SIZE)
-          );
-        } else {
-          const cursor = cursorMap[page - 1];
-          if (!cursor) return;
-          q = query(
-            collection(db, 'users'),
-            where('role', '==', 'employee'),
-            orderBy('name'),
-            startAfter(cursor),
-            limit(PAGE_SIZE)
-          );
-        }
-        const snap = await getDocs(q);
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data(), _snap: d }));
-        if (snap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-        }
-        // Client-side search filter (name/email/phone) — for full server-side search you'd need Algolia
-        const filtered = debouncedSearch
-          ? docs.filter(e =>
-              (e.name   || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-              (e.email  || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-              (e.phone  || '').toLowerCase().includes(debouncedSearch.toLowerCase())
-            )
-          : docs;
-        setRows(filtered);
-      } catch (e) {
-        toast.error('Failed to load employees: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-    // eslint-disable-next-line
-  }, [db, page, debouncedSearch, refreshKey]);
+  const [search, setSearch] = useState('');
+  const { rows, loading, total, page, setPage, refresh, error } = usePagedCollection(db, 'users', employeeQuery(search));
+  const handleSearch = setSearch;
 
   const roleColor = (role) => role === 'admin' ? 'error' : 'primary';
 
@@ -120,7 +45,7 @@ const EmployeeList = () => {
         </Box>
         <Stack direction="row" spacing={1}>
           <Tooltip title="Refresh">
-            <IconButton onClick={() => { setPage(0); setCursorMap({}); setRefreshKey(k => k + 1); }}>
+            <IconButton onClick={() => { refresh(); }}>
               <Refresh />
             </IconButton>
           </Tooltip>
@@ -141,6 +66,7 @@ const EmployeeList = () => {
         />
       </Card>
 
+      <QueryStatus error={error} loading={loading} search={search} />
       {/* Table */}
       <Card>
         {loading ? (
@@ -225,9 +151,9 @@ const EmployeeList = () => {
             </TableContainer>
             <TablePagination
               component="div"
-              count={total}
+              count={total ?? -1}
               page={page}
-              onPageChange={(_, p) => { setPage(p); if (p === 0) setCursorMap({}); }}
+              onPageChange={(_, p) => { setPage(p); }}
               rowsPerPage={PAGE_SIZE}
               rowsPerPageOptions={[PAGE_SIZE]}
             />

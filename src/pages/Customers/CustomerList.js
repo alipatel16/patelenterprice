@@ -1,44 +1,18 @@
-// src/pages/Customers/CustomerList.js
-//
-// SEARCH STRATEGY
-// ───────────────
-// No month selected  →  server-side cursor pagination (fast, cheap).
-//                        Search bar is disabled.
-// Month selected     →  fetch ALL customers created in that month (bounded).
-//                        Filter by search + type/category in memory.
-//                        Paginate the filtered array in memory.
-
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Box, Typography, Button, Card, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TablePagination, Chip, Avatar, IconButton, Tooltip, Dialog,
-  DialogTitle, DialogContent, DialogActions, MenuItem, Select,
-  FormControl, InputLabel, Grid, Alert, CircularProgress,
-  useTheme, useMediaQuery, Stack,
-} from '@mui/material';
-import { Search, Edit, Delete, PersonAdd, Business, Save, Close } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, addDoc, updateDoc, getCountFromServer,
-  where, serverTimestamp, Timestamp,
-} from 'firebase/firestore';
+import { deleteRecord as deleteDoc, addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions } from '../../utils/businessListQueries';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Button, Card, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination, Chip, Avatar, IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, FormControl, InputLabel, Grid, Alert, CircularProgress, useTheme, useMediaQuery, Stack } from '@mui/material';
+import { Edit, Delete, PersonAdd, Business, Save, Close } from '@mui/icons-material';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { CUSTOMER_TYPES, CUSTOMER_CATEGORIES } from '../../constants';
 import MonthSearchBar from '../../components/MonthSearchBar';
 import { normalizeCustomer } from '../../utils/normalizeDoc';
 
-const PAGE_SIZE = 10;
-
-const getMonthBounds = (yearMonth) => {
-  const [y, m] = yearMonth.split('-').map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  return {
-    start: new Date(y, m - 1, 1, 0, 0, 0, 0),
-    end:   new Date(y, m - 1, lastDay, 23, 59, 59, 999),
-  };
-};
+const PAGE_SIZE = 15;
 
 // ─── Customer Form Dialog ─────────────────────────────────────────────────────
 const EMPTY = {
@@ -106,103 +80,29 @@ const CustomerList = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows, setRows]       = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal]     = useState(0);
-  const [page, setPage]       = useState(0);
-  const [cursorMap, setCursorMap] = useState({});
-  const [refreshKey, setRefreshKey] = useState(0);
-
   const [typeFilter, setTypeFilter] = useState('all');
   const [catFilter,  setCatFilter]  = useState('all');
 
   const [searchMonth,     setSearchMonth]     = useState('');
   const [search,          setSearch]          = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchTimer = useRef(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing,    setEditing]    = useState(null);
   const [deleteId,   setDeleteId]   = useState(null);
 
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
-  };
+  const handleSearch = setSearch;
 
-  const handleMonthChange = val => {
-    setSearchMonth(val); setSearch(''); setDebouncedSearch(''); setPage(0); setCursorMap({});
-  };
+  const handleMonthChange = setSearchMonth;
 
   const handleFilterChange = setter => e => {
-    setter(e.target.value); setPage(0); setCursorMap({});
+    setter(e.target.value); setPage(0);
   };
 
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    const run = async () => {
-      setLoading(true);
-      try {
-        // ── MONTH SEARCH MODE ────────────────────────────────────────────
-        if (searchMonth) {
-          const { start, end } = getMonthBounds(searchMonth);
-          const snap = await getDocs(query(
-            collection(db, 'customers'),
-            where('createdAt', '>=', Timestamp.fromDate(start)),
-            where('createdAt', '<=', Timestamp.fromDate(end)),
-            orderBy('createdAt', 'desc'),
-          ));
-          if (!active) return;
-          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          if (typeFilter !== 'all') all = all.filter(r => r.customerType === typeFilter);
-          if (catFilter  !== 'all') all = all.filter(r => r.category === catFilter);
-          if (debouncedSearch.trim()) {
-            const s = debouncedSearch.toLowerCase();
-            all = all.filter(r =>
-              r.name?.toLowerCase().includes(s) ||
-              r.phone?.includes(s) ||
-              r.email?.toLowerCase().includes(s)
-            );
-          }
-          setTotal(all.length);
-          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
-          return;
-        }
+  const { rows, loading, error, total, page, setPage, refresh } = usePagedCollection(
+    db, 'customers', businessListOptions('customers', { search, month: searchMonth, typeFilter, catFilter })
+  );
 
-        // ── NORMAL CURSOR PAGINATION ─────────────────────────────────────
-        const constraints = [orderBy('name')];
-        if (typeFilter !== 'all') constraints.push(where('customerType', '==', typeFilter));
-        if (catFilter  !== 'all') constraints.push(where('category',     '==', catFilter));
-        constraints.push(limit(PAGE_SIZE));
-        if (page > 0 && cursorMap[page - 1]) constraints.push(startAfter(cursorMap[page - 1]));
-
-        const countFilters = [];
-        if (typeFilter !== 'all') countFilters.push(where('customerType', '==', typeFilter));
-        if (catFilter  !== 'all') countFilters.push(where('category',     '==', catFilter));
-
-        const [snap, countSnap] = await Promise.all([
-          getDocs(query(collection(db, 'customers'), ...constraints)),
-          getCountFromServer(query(collection(db, 'customers'), ...countFilters)),
-        ]);
-        if (!active) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
-        if (snap.docs.length > 0) setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load customers');
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    run();
-    return () => { active = false; };
-  }, [db, page, typeFilter, catFilter, searchMonth, debouncedSearch, refreshKey]);
-
-  const resetAndRefetch = () => { setCursorMap({}); setPage(0); setRefreshKey(k => k + 1); };
+  const resetAndRefetch = refresh;
 
   const handleSave = async form => {
     if (editing?.id) {
@@ -226,6 +126,7 @@ const CustomerList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} search={search} />
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
         <Box>
           <Typography variant="h5" fontWeight={700}>Customers</Typography>
@@ -292,8 +193,8 @@ const CustomerList = () => {
                     <TableRow>
                       <TableCell colSpan={isMobile ? 3 : 6} align="center" sx={{ py: 6 }}>
                         <Typography color="text.secondary">
-                          {searchMonth && debouncedSearch
-                            ? `No customers matching "${debouncedSearch}"`
+                          {searchMonth && search
+                            ? `No customers matching "${search}"`
                             : searchMonth ? 'No customers added in this month'
                             : 'No customers found'}
                         </Typography>
@@ -344,7 +245,7 @@ const CustomerList = () => {
             </TableBody>
           </Table>
         </TableContainer>
-        <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+        <TablePagination component="div" count={total ?? 0} page={page} rowsPerPage={PAGE_SIZE}
           onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
       </Card>
 

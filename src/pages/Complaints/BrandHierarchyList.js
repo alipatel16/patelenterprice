@@ -1,25 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, IconButton, Chip,
-  Dialog, DialogTitle, DialogContent, DialogActions, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, TablePagination,
-  Stack, Tooltip, TextField, InputAdornment, CircularProgress, Divider,
-  Alert, Grid,
-} from '@mui/material';
-import {
-  Add, Edit, Delete, Business, Search, AccountTree,
-  Settings, Person, Phone, Save,
-} from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getCountFromServer, getDoc, setDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { deleteRecord as deleteDoc, setRecord as setDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions } from '../../utils/businessListQueries';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Button, Card, CardContent, IconButton, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination, Stack, Tooltip, TextField, InputAdornment, CircularProgress, Alert, Grid } from '@mui/material';
+import { Add, Edit, Delete, Business, Search, AccountTree, Settings, Save } from '@mui/icons-material';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useMediaQuery, useTheme } from '@mui/material';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 // ─── Default Hierarchy Dialog ─────────────────────────────────────────────────
 const DefaultHierarchyDialog = ({ open, onClose, db }) => {
@@ -112,56 +105,27 @@ const BrandHierarchyList = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  const [cursorMap, setCursorMap] = useState({});
   const [deleteId, setDeleteId] = useState(null);
   const [deleteName, setDeleteName] = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
   const [defaultOpen, setDefaultOpen] = useState(false);
 
-  useEffect(() => {
-    if (!db) return;
-    loadPage();
-    // eslint-disable-next-line
-  }, [db, page, refreshKey]);
-
-  const loadPage = async () => {
-    setLoading(true);
-    try {
-      const countSnap = await getCountFromServer(collection(db, 'brandHierarchies'));
-      setTotal(countSnap.data().count);
-      const constraints = [orderBy('brandName'), limit(PAGE_SIZE)];
-      if (page > 0 && cursorMap[page]) constraints.push(startAfter(cursorMap[page]));
-      const snap = await getDocs(query(collection(db, 'brandHierarchies'), ...constraints));
-      if (snap.docs.length > 0) setCursorMap(m => ({ ...m, [page + 1]: snap.docs[snap.docs.length - 1] }));
-      setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (e) {
-      toast.error('Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { rows, loading, error, total, page, setPage, refresh } = usePagedCollection(db, 'brandHierarchies', businessListOptions('brandHierarchies', { search }));
 
   const handleDelete = async () => {
     try {
       await deleteDoc(doc(db, 'brandHierarchies', deleteId));
       toast.success('Brand hierarchy deleted');
       setDeleteId(null);
-      setCursorMap({});
+
       setPage(0);
-      setRefreshKey(k => k + 1);
+      refresh();
     } catch (e) {
       toast.error('Delete failed');
     }
   };
 
-  const filtered = search.trim()
-    ? rows.filter(r => r.brandName?.toLowerCase().includes(search.toLowerCase()))
-    : rows;
+  const filtered = rows;
 
   const MobileCard = ({ row }) => (
     <Card elevation={0} sx={{ mb: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
@@ -197,6 +161,7 @@ const BrandHierarchyList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} search={search} />
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={1}>
         <Box display="flex" alignItems="center" gap={1}>
@@ -241,8 +206,8 @@ const BrandHierarchyList = () => {
             </Box>
           ) : filtered.map(row => <MobileCard key={row.id} row={row} />)}
           {rows.length > 0 && (
-            <TablePagination component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); setCursorMap({}); }}
+            <TablePagination component="div" count={total ?? 0} page={page}
+              onPageChange={(_, p) => { setPage(p);  }}
               rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
               sx={{ '.MuiTablePagination-toolbar': { px: 0 } }} />
           )}
@@ -323,7 +288,7 @@ const BrandHierarchyList = () => {
               </TableBody>
             </Table>
           </TableContainer>
-          <TablePagination component="div" count={total} page={page}
+          <TablePagination component="div" count={total ?? 0} page={page}
             onPageChange={(_, p) => { setPage(p); }}
             rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
         </Card>

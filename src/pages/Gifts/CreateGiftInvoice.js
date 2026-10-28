@@ -1,19 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  Alert, CircularProgress, IconButton, Autocomplete, Chip, Stack,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Dialog, DialogTitle, DialogContent, DialogActions, FormControl,
-  InputLabel, Select, MenuItem,
-} from '@mui/material';
-import {
-  ArrowBack, Save, CardGiftcard, PersonAdd, CheckCircle,
-  HourglassEmpty,
-} from '@mui/icons-material';
-import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp, getDoc, getCountFromServer,
-} from 'firebase/firestore';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, Alert, CircularProgress, IconButton, Chip, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
+import { ArrowBack, Save, CardGiftcard, PersonAdd, HourglassEmpty } from '@mui/icons-material';
+import { collection, doc, serverTimestamp, getCountFromServer } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -132,9 +122,6 @@ const CreateGiftInvoice = () => {
   const navigate = useNavigate();
   const isEdit = !!id;
 
-  // customers kept for commented-out Autocomplete reference below
-  const [customers, setCustomers] = useState([]);
-  const [giftSets, setGiftSets] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedGiftSet, setSelectedGiftSet] = useState(null);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -145,23 +132,12 @@ const CreateGiftInvoice = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
-  const [giftSetSearch, setGiftSetSearch] = useState('');
 
   useEffect(() => {
     if (!db) return;
-    loadLookups();
     if (id) loadExisting();
     // eslint-disable-next-line
   }, [db]);
-
-  // FIX: removed customers getDocs — now handled on-demand by FirestoreAutocomplete.
-  // Gift sets are a small bounded collection (~10–30) so still loaded eagerly.
-  const loadLookups = async () => {
-    // const custSnap = await getDocs(query(collection(db, 'customers'), orderBy('name')));
-    // setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    const gsSnap = await getDocs(query(collection(db, 'giftSets'), orderBy('createdAt', 'desc')));
-    setGiftSets(gsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-  };
 
   const loadExisting = async () => {
     setLoading(true);
@@ -190,7 +166,7 @@ const CreateGiftInvoice = () => {
   const handleSelectGiftSet = (gs) => {
     setSelectedGiftSet(gs);
     // Populate items with pending delivery status
-    setItems((gs.items || []).map(it => ({
+    setItems((gs?.items || []).map(it => ({
       ...it,
       deliveryStatus: 'pending',
       deliveredAt: null,
@@ -200,16 +176,11 @@ const CreateGiftInvoice = () => {
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
-    setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
     // Flush search cache so new customer appears in next FirestoreAutocomplete query
-    invalidateSearchCache('customers');
+    invalidateSearchCache('customers', db);
     toast.success('Customer added');
   };
-
-  const filteredGiftSets = giftSetSearch.trim()
-    ? giftSets.filter(g => g.name?.toLowerCase().includes(giftSetSearch.toLowerCase()))
-    : giftSets;
 
   const handleSave = async () => {
     setError('');
@@ -306,25 +277,7 @@ const CreateGiftInvoice = () => {
               New Customer
             </Button>
           </Box>
-          {/* <Autocomplete
-            options={customers}
-            getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
-            value={selectedCustomer}
-            onChange={(_, v) => setSelectedCustomer(v)}
-            isOptionEqualToValue={(a, b) => a.id === b.id}
-            renderInput={params => (
-              <TextField {...params} label="Select Customer *" size="small"
-                placeholder="Search by name or phone..." />
-            )}
-            renderOption={(props, o) => (
-              <Box component="li" {...props}>
-                <Box>
-                  <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
-                  <Typography variant="caption" color="text.secondary">{o.phone} · {o.city}</Typography>
-                </Box>
-              </Box>
-            )}
-          /> */}
+
           <FirestoreAutocomplete
             db={db}
             collectionName="customers"
@@ -370,31 +323,11 @@ const CreateGiftInvoice = () => {
             </Button>
           </Box>
 
-          {giftSets.length === 0 ? (
-            <Alert severity="info">
-              No gift sets found.{' '}
-              <Button size="small" onClick={() => navigate('/gift-sets/new')}>Create your first gift set →</Button>
-            </Alert>
-          ) : (
-            <>
-              <TextField
-                fullWidth size="small" placeholder="Search gift sets..."
-                value={giftSetSearch} onChange={e => setGiftSetSearch(e.target.value)}
-                sx={{ mb: 2 }}
-              />
-              <Grid container spacing={1.5}>
-                {filteredGiftSets.map(gs => (
-                  <Grid item xs={12} sm={6} md={4} key={gs.id}>
-                    <GiftSetCard
-                      giftSet={gs}
-                      selected={selectedGiftSet?.id === gs.id}
-                      onSelect={handleSelectGiftSet}
-                    />
-                  </Grid>
-                ))}
-              </Grid>
-            </>
-          )}
+          <FirestoreAutocomplete db={db} collectionName="giftSets" label="Search Gift Set *"
+            sort={[['createdAt', 'desc']]} value={selectedGiftSet}
+            onChange={(_, giftSet) => handleSelectGiftSet(giftSet)} getOptionLabel={option => option.name || ''} />
+          {selectedGiftSet && <Box mt={2}><GiftSetCard giftSet={selectedGiftSet} selected onSelect={handleSelectGiftSet} /></Box>}
+
         </CardContent>
       </Card>
 

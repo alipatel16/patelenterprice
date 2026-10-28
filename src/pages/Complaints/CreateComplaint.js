@@ -1,17 +1,12 @@
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { getKnownDocument } from '../../data/query';
 import React, { useState, useEffect } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  MenuItem, Select, FormControl, InputLabel, Alert, Autocomplete,
-  CircularProgress, IconButton, Stack, Chip, RadioGroup,
-  FormControlLabel, Radio, Paper,
-} from '@mui/material';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, Alert, CircularProgress, IconButton, RadioGroup, FormControlLabel, Radio, Paper } from '@mui/material';
 import {
   ArrowBack, Save, PersonAdd, Person, Business,
 } from '@mui/icons-material';
-import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp, getDoc, getCountFromServer,
-} from 'firebase/firestore';
+import { collection, doc, serverTimestamp, getCountFromServer } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -71,11 +66,6 @@ const CreateComplaint = () => {
   const navigate = useNavigate();
   const isEdit = !!id;
 
-  // customers kept for commented-out Autocomplete reference below
-  const [customers, setCustomers] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [brandHierarchies, setBrandHierarchies] = useState([]);
-
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
@@ -105,25 +95,11 @@ const CreateComplaint = () => {
 
   useEffect(() => {
     if (!db) return;
-    // FIX 4: Load lookups first sequentially, THEN load existing
-    const init = async () => {
-      // FIX: removed customers getDocs — now handled on-demand by FirestoreAutocomplete.
-      // Employees (~20) and brand hierarchies (~small set) still loaded eagerly.
-      const [empSnap, bhSnap] = await Promise.all([
-        getDocs(query(collection(db, 'users'), orderBy('name'))),
-        getDocs(query(collection(db, 'brandHierarchies'), orderBy('brandName'))),
-      ]);
-      const loadedBH = bhSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setEmployees(empSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setBrandHierarchies(loadedBH);
-      // FIX 4: pass loadedBH directly — don't rely on state not yet committed
-      if (id) await loadExisting(loadedBH);
-    };
-    init();
+    if (id) loadExisting();
     // eslint-disable-next-line
-  }, [db]);
+  }, [db, id]);
 
-  const loadExisting = async (loadedBH) => {
+  const loadExisting = async () => {
     setLoading(true);
     try {
       const snap = await getDoc(doc(db, 'complaints', id));
@@ -186,7 +162,7 @@ const CreateComplaint = () => {
 
       // FIX 4: find full hierarchy object (with levels) from the already-loaded list
       if (d.brandHierarchyId) {
-        const fullBH = loadedBH.find(bh => bh.id === d.brandHierarchyId) || null;
+        const fullBH = await getKnownDocument(db, 'brandHierarchies', d.brandHierarchyId);
         setSelectedBrandHierarchy(fullBH);
         // FIX 1: preserve 'default' value correctly (d.currentEscalationLevel could be 'default' string or number)
         setCurrentEscalationLevel(d.currentEscalationLevel ?? 1);
@@ -221,10 +197,9 @@ const CreateComplaint = () => {
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
-    setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
     // Flush search cache so new customer appears in next FirestoreAutocomplete query
-    invalidateSearchCache('customers');
+    invalidateSearchCache('customers', db);
     toast.success('Customer added');
   };
 
@@ -348,18 +323,7 @@ const CreateComplaint = () => {
             <Typography variant="subtitle1" fontWeight={700}>Customer Info</Typography>
             <Button size="small" startIcon={<PersonAdd />} onClick={() => setNewCustomerOpen(true)}>New Customer</Button>
           </Box>
-          {/* <Autocomplete options={customers}
-            getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
-            value={selectedCustomer} onChange={(_, v) => setSelectedCustomer(v)}
-            isOptionEqualToValue={(a, b) => a.id === b.id}
-            renderInput={params => <TextField {...params} label="Select Customer *" size="small" placeholder="Search..." />}
-            renderOption={(props, o) => (
-              <Box component="li" {...props}>
-                <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>{o.phone} · {o.city}</Typography>
-              </Box>
-            )}
-          /> */}
+
           <FirestoreAutocomplete
             db={db}
             collectionName="customers"
@@ -460,11 +424,10 @@ const CreateComplaint = () => {
           {/* Internal */}
           {assigneeType === 'internal' && (
             <>
-              <Autocomplete options={employees}
+              <FirestoreAutocomplete db={db} collectionName="users" label="Select Internal Employee *"
                 getOptionLabel={o => o.name ? `${o.name}${o.phone ? ` — ${o.phone}` : ''}` : ''}
                 value={selectedEmployee} onChange={(_, v) => setSelectedEmployee(v)}
                 isOptionEqualToValue={(a, b) => a.id === b.id}
-                renderInput={params => <TextField {...params} label="Select Internal Employee *" size="small" />}
                 renderOption={(props, o) => (
                   <Box component="li" {...props}>
                     <Typography variant="body2" fontWeight={600}>{o.name}</Typography>
@@ -491,14 +454,11 @@ const CreateComplaint = () => {
             <>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
-                  <Autocomplete options={brandHierarchies}
+                  <FirestoreAutocomplete db={db} collectionName="brandHierarchies" sort={[['brandName', 'asc']]} label="Brand Hierarchy *"
                     getOptionLabel={o => o.brandName || ''}
                     value={selectedBrandHierarchy}
                     onChange={(_, v) => handleBrandHierarchySelect(v)}
                     isOptionEqualToValue={(a, b) => a.id === b.id}
-                    renderInput={params => (
-                      <TextField {...params} label="Brand Hierarchy *" size="small" placeholder="Select brand..." />
-                    )}
                     renderOption={(props, o) => (
                       <Box component="li" {...props}>
                         <Typography variant="body2" fontWeight={600}>{o.brandName}</Typography>
