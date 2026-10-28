@@ -13,7 +13,6 @@ Generated from the AST census after the refactor. Ordinary pages and lookups del
 | `src/data/reports.js` | aggregate, bounded-shared-query |
 | `src/data/writes.js` | atomic-source-adapter |
 | `src/hooks/useFirestore.js` | bounded-shared-query, known-id |
-| `src/hooks/usePagedCollection.js` | bounded-shared-query |
 | `src/hooks/useSalesQueue.js` | aggregate |
 | `src/pages/Complaints/BrandHierarchyForm.js` | known-id |
 | `src/pages/Complaints/BrandHierarchyList.js` | bounded-shared-query, known-id |

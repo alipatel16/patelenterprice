@@ -185,13 +185,6 @@
       "disposition": "known-id"
     },
     {
-      "file": "src/hooks/usePagedCollection.js",
-      "line": 43,
-      "api": "fetchPage",
-      "kind": "read",
-      "disposition": "bounded-shared-query"
-    },
-    {
       "file": "src/hooks/useSalesQueue.js",
       "line": 33,
       "api": "fetchAggregate",
@@ -585,21 +578,21 @@
     },
     {
       "file": "src/pages/Sales/CreateSale.js",
-      "line": 315,
+      "line": 317,
       "api": "getDoc",
       "kind": "read",
       "disposition": "known-id"
     },
     {
       "file": "src/pages/Sales/CreateSale.js",
-      "line": 567,
+      "line": 570,
       "api": "getDoc",
       "kind": "read",
       "disposition": "known-id"
     },
     {
       "file": "src/pages/Sales/CreateSale.js",
-      "line": 672,
+      "line": 675,
       "api": "getCountFromServer",
       "kind": "read",
       "disposition": "aggregate"
@@ -662,21 +655,21 @@
     },
     {
       "file": "src/pages/Sales/ReportPeriodView.js",
-      "line": 55,
+      "line": 58,
       "api": "usePagedCollection",
       "kind": "read",
       "disposition": "bounded-shared-query"
     },
     {
       "file": "src/pages/Sales/ReportPeriodView.js",
-      "line": 62,
+      "line": 65,
       "api": "getKnownDocument",
       "kind": "read",
       "disposition": "known-id"
     },
     {
       "file": "src/pages/Sales/ReportPeriodView.js",
-      "line": 95,
+      "line": 98,
       "api": "getKnownDocument",
       "kind": "read",
       "disposition": "known-id"

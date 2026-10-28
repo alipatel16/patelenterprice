@@ -43,6 +43,7 @@ test('real Firestore rules, indexed transport shapes, concurrent payments and de
       grandTotal: 400, downPayment: 100, totalPaidAmount: 100, paymentType: 'emi', paymentStatus: 'partial',
       items: [{ productId: 'p1', productName: 'Synthetic Chair', qty: 1, price: 400 }],
       emiInstallments: [{ installmentNumber: 1, dueDate: '2024-02-01', amount: 150, paidAmount: 0, payments: [] }, { installmentNumber: 2, dueDate: '2030-01-01', amount: 150, paidAmount: 0, payments: [] }] });
+    const editSnapshot = (await sdk.getDoc(saleRef)).data();
     const entry = amount => ({ amount, payDate: '2026-10-28', mode: 'Cash', recordedByName: 'Test Staff' });
     stage = 'concurrent payments';
     await Promise.all([payments.recordEmiPayment(db, saleRef.id, 1, entry(20), 'receipt-a'), payments.recordEmiPayment(db, saleRef.id, 1, entry(30), 'receipt-b'), payments.recordEmiPayment(db, saleRef.id, 1, entry(10), 'receipt-c')]);
@@ -50,6 +51,7 @@ test('real Firestore rules, indexed transport shapes, concurrent payments and de
     const sale = (await sdk.getDoc(saleRef)).data();
     assert.equal(sale.emiInstallments[0].paidAmount, 60); assert.equal(sale.totalPaidAmount, 160); assert.equal(sale.emiInstallments[0].payments.length, 3);
     stage = 'queue aggregates';
+    await assert.rejects(loadDataModule('saleEdit').saveSaleEdit(writes.mutateRecord, saleRef, editSnapshot, { customerName: 'Stale form', emiInstallments: editSnapshot.emiInstallments }), /changed while you were editing/);
     const overdue = await data.fetchPage(db, 'emiDues', { filters: [['dueDate', '<', '2026-10-28']], sort: [['dueDate', 'asc']], requireReady: true });
     assert.equal(overdue.rows.length, 1); assert.equal(overdue.rows[0].remainingAmount, 90);
     const totals = await data.fetchAggregate(db, 'emiDues', { aggregates: { remaining: { op: 'sum', field: 'remainingAmount' } }, requireReady: true });
@@ -63,6 +65,17 @@ test('real Firestore rules, indexed transport shapes, concurrent payments and de
     await writes.deleteRecord(saleRef);
     assert.equal((await sdk.getDoc(saleRef)).exists(), false);
     assert.equal((await sdk.getDoc(sdk.doc(db, 'emiDues', 'historical-emi_1'))).exists(), false);
+    stage = 'inventory contention';
+    const inventoryRef = sdk.doc(db, 'inventory', 'concurrent-stock');
+    await writes.setRecord(inventoryRef, { productId: 'stock-product', productName: 'Synthetic stock', stock: 10, soldQty: 0, purchasedQty: 10 });
+    const inventory = require('./data-module.cjs').loadSourceModule('src/utils/inventoryUtils.js');
+    const changeStock = type => inventory.applyInventoryDeltas(db, [], [{ productId: 'stock-product', qty: 1 }], type);
+    await Promise.all([changeStock('sale'), changeStock('sale')]);
+    assert.equal((await sdk.getDoc(inventoryRef)).data().stock, 8);
+    assert.equal((await sdk.getDoc(inventoryRef)).data().soldQty, 2);
+    await Promise.all([changeStock('purchase'), changeStock('purchase')]);
+    assert.equal((await sdk.getDoc(inventoryRef)).data().stock, 10);
+    assert.equal((await sdk.getDoc(inventoryRef)).data().purchasedQty, 12);
     stage = 'REST current-source backfill';
     const legacyResponse = await fetch(`http://127.0.0.1:8080/v1/projects/${project}/databases/(default)/documents/customers/legacy-rest`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' }, body: JSON.stringify({ fields: { name: { stringValue: 'Current Legacy Customer' }, phone: { stringValue: '8765432109' } } }) });
     assert.equal(legacyResponse.ok, true);
