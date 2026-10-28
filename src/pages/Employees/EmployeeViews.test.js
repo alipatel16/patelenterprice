@@ -1,0 +1,44 @@
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import ChecklistAdminView from './ChecklistAdminView';
+import ReportPeriodView from '../Sales/ReportPeriodView';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import { loadChecklistDays } from './employeeData';
+
+jest.mock('../../contexts/AuthContext', () => { const db = {}; return { useAuth: () => ({ db, isAdmin: true }) }; });
+jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }));
+jest.mock('../../hooks/usePagedCollection', () => ({ __esModule: true, default: jest.fn() }));
+jest.mock('./employeeData', () => ({ ...jest.requireActual('./employeeData'), loadChecklistDays: jest.fn() }));
+jest.mock('../../data/reports', () => ({ ...jest.requireActual('../../data/reports'), fetchReportTotals: async () => ({ revenue: 100, quantity: 1, invoiceCount: 1, reconciliationCount: 0, undatedInvoiceCount: 0 }) }));
+jest.mock('../../data/query', () => ({ ...jest.requireActual('../../data/query'), getKnownDocument: async () => null, subscribeInvalidation: () => () => {} }));
+const page = rows => ({ rows, total: 40, page: 0, hasNext: true, loading: false, error: null, setPage: jest.fn(), refresh: jest.fn() });
+let root, host;
+beforeEach(() => { global.IS_REACT_ACT_ENVIRONMENT = true; jest.clearAllMocks(); host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host); });
+afterEach(() => { act(() => root.unmount()); host.remove(); });
+it('retains the full checklist-day count while expanded task bodies use a separate 15 row cursor page', async () => {
+  const employees = page([{ id: 'u1', name: 'Visible Employee' }]);
+  const tasks = page(Array.from({ length: 15 }, (_, i) => ({ id: `t${i}`, userId: 'u1', templateTitle: `Task ${i}`, completed: false })));
+  usePagedCollection.mockImplementation((_, name) => name === 'users' ? employees : tasks);
+  loadChecklistDays.mockResolvedValue([{ userId: 'u1', totalCount: 40, completedCount: 20 }]);
+  await act(async () => root.render(<ChecklistAdminView />));
+  expect(host.textContent).toContain('20/40');
+  const toggle = host.querySelector('tbody tr button');
+  await act(async () => toggle.click());
+  expect(host.textContent).toContain('Task 14'); expect(host.textContent).not.toContain('Task 15');
+  const requests = usePagedCollection.mock.calls.filter(([db, name]) => db && name === 'checklistInstances');
+  expect(requests.at(-1)[2]).toMatchObject({ pageSize: 15, filters: expect.arrayContaining([['userId', '==', 'u1']]) });
+  const next = host.querySelector('tbody tr:nth-child(2) button[aria-label="Go to next page"]');
+  await act(async () => next.click());
+  expect(tasks.setPage).toHaveBeenCalledWith(1);
+});
+it('drills into a legacy employee bucket using its exact derived source key before the 15 row limit', async () => {
+  const ranked = page([{ dimensionKey: 'legacy:duplicate name', employeeKey: 'legacy:duplicate name', employeeId: null, employeeName: 'Duplicate Name', quantity: 1, revenue: 100, invoiceCount: 1 }]);
+  const empty = page([]);
+  usePagedCollection.mockImplementation((_, name) => name === 'reportEmployeePeriods' ? ranked : empty);
+  await act(async () => root.render(<ReportPeriodView dimension="employee" />));
+  const invoices = [...host.querySelectorAll('button')].find(button => button.textContent === 'Invoices');
+  await act(async () => invoices.click());
+  const request = usePagedCollection.mock.calls.filter(([db, name]) => db && name === 'sales').at(-1);
+  expect(request).toBeTruthy();
+  expect(request[2]).toMatchObject({ pageSize: 15, filters: expect.arrayContaining([['reportEmployeeKey', '==', 'legacy:duplicate name']]) });
+});

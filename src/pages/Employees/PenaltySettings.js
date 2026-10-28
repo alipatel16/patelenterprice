@@ -1,3 +1,5 @@
+import { getKnownSnapshot as getDoc } from './employeeData';
+import { setRecord as setDoc } from '../../data/writes';
 // src/pages/Employees/PenaltySettings.js
 import React, { useState, useEffect } from 'react';
 import {
@@ -9,7 +11,7 @@ import {
   Save, AccessTime, AttachMoney, Warning, Info,
   Schedule, HourglassEmpty, BeachAccess,
 } from '@mui/icons-material';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 

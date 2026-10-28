@@ -1,5 +1,8 @@
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { deleteRecord as deleteDoc } from '../../data/writes';
 // src/pages/Employees/ChecklistTemplateList.js
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination,
@@ -8,16 +11,13 @@ import {
   useTheme, useMediaQuery,
 } from '@mui/material';
 import { Add, Edit, Delete, Checklist, Refresh } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter,
-  getDocs, deleteDoc, doc, getCountFromServer,
-} from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { DAYS_OF_WEEK } from './employeeConstants';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const occurrenceLabel = (t) => {
   if (t.occurrenceType === 'daily')   return { label: 'Daily',   color: 'success' };
@@ -35,49 +35,10 @@ const ChecklistTemplateList = () => {
   const theme    = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [rows,      setRows]      = useState([]);
-  const [loading,   setLoading]   = useState(false);
-  const [total,     setTotal]     = useState(0);
-  const [page,      setPage]      = useState(0);
-  const [cursorMap, setCursorMap] = useState({});
+  const { rows, loading, total, page, setPage, refresh, error } = usePagedCollection(db, 'checklistTemplates', { sort: [['title', 'asc']], pageSize: 15 });
   const [deleteId,  setDeleteId]  = useState(null);
   const [deleteTitle, setDeleteTitle] = useState('');
   const [deleting,  setDeleting]  = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    if (!db) return;
-    getCountFromServer(collection(db, 'checklistTemplates'))
-      .then(s => setTotal(s.data().count))
-      .catch(() => {});
-  }, [db, refreshKey]);
-
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        let q;
-        if (page === 0) {
-          q = query(collection(db, 'checklistTemplates'), orderBy('title'), limit(PAGE_SIZE));
-        } else {
-          const cursor = cursorMap[page - 1];
-          if (!cursor) return;
-          q = query(collection(db, 'checklistTemplates'), orderBy('title'), startAfter(cursor), limit(PAGE_SIZE));
-        }
-        const snap = await getDocs(q);
-        if (snap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-        }
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) {
-        toast.error('Failed to load: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, page, refreshKey]);
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -87,8 +48,7 @@ const ChecklistTemplateList = () => {
       toast.success('Template deleted');
       setDeleteId(null);
       setPage(0);
-      setCursorMap({});
-      setRefreshKey(k => k + 1);
+      refresh();
     } catch (e) {
       toast.error('Delete failed: ' + e.message);
     } finally {
@@ -98,6 +58,7 @@ const ChecklistTemplateList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} />
       {/* Header */}
       <Box display="flex" alignItems={{ xs: 'flex-start', sm: 'center' }}
         flexDirection={{ xs: 'column', sm: 'row' }}
@@ -110,7 +71,7 @@ const ChecklistTemplateList = () => {
         </Box>
         <Stack direction="row" spacing={1}>
           <Tooltip title="Refresh">
-            <IconButton onClick={() => { setPage(0); setCursorMap({}); setRefreshKey(k => k + 1); }}>
+            <IconButton onClick={() => { setPage(0); refresh();  }}>
               <Refresh />
             </IconButton>
           </Tooltip>
@@ -191,8 +152,8 @@ const ChecklistTemplateList = () => {
               </Table>
             </TableContainer>
             <TablePagination
-              component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); if (p === 0) setCursorMap({}); }}
+              component="div" count={total ?? -1} page={page}
+              onPageChange={(_, p) => { setPage(p); if (p === 0) refresh(); }}
               rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
             />
           </>

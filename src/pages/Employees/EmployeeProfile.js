@@ -1,3 +1,6 @@
+import { getKnownSnapshot as getDoc } from './employeeData';
+import FirestoreAutocomplete from '../../components/FirestoreAutocomplete';
+import { updateRecord as updateDoc } from '../../data/writes';
 // src/pages/Employees/EmployeeProfile.js
 import React, { useState, useEffect } from 'react';
 import {
@@ -12,10 +15,7 @@ import {
   AttachMoney, CheckCircle, Delete as DeleteIcon,
   Block, CheckCircleOutline,
 } from '@mui/icons-material';
-import {
-  doc, getDoc, updateDoc, serverTimestamp,
-  collection, getDocs, query, orderBy,
-} from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -41,7 +41,6 @@ const EmployeeProfile = () => {
   const [allAccessMode, setAllAccessMode] = useState(true);
 
   // Checklists
-  const [checklistTemplates,  setChecklistTemplates]  = useState([]);
   const [assignedChecklists,  setAssignedChecklists]  = useState([]);
 
   // Disable/enable dialog
@@ -53,10 +52,7 @@ const EmployeeProfile = () => {
     const load = async () => {
       setLoading(true);
       try {
-        const [empSnap, clSnap] = await Promise.all([
-          getDoc(doc(db, 'users', id)),
-          getDocs(query(collection(db, 'checklistTemplates'), orderBy('title'))),
-        ]);
+        const empSnap = await getDoc(doc(db, 'users', id));
 
         if (!empSnap.exists()) { toast.error('Employee not found'); navigate('/employees'); return; }
         const data = empSnap.data();
@@ -74,14 +70,7 @@ const EmployeeProfile = () => {
           setAllowedPages([]);
         }
 
-        const templates = clSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setChecklistTemplates(templates);
-
-        const activeTemplateIds = new Set(templates.map(t => t.id));
-        const filteredChecklists = (data.assignedChecklists || []).filter(
-          cl => activeTemplateIds.has(cl.templateId)
-        );
-        setAssignedChecklists(filteredChecklists);
+        setAssignedChecklists(data.assignedChecklists || []);
       } catch (e) {
         setError(e.message);
       } finally {
@@ -325,46 +314,13 @@ const EmployeeProfile = () => {
             <Chip label={assignedChecklists.length} size="small" color="info" />
           </Box>
 
-          <Autocomplete
-            multiple
-            options={checklistTemplates}
-            getOptionLabel={opt => opt.title}
-            value={checklistTemplates.filter(t => assignedChecklists.some(a => a.templateId === t.id))}
-            onChange={(_, selected) => {
-              setAssignedChecklists(selected.map(s => ({
-                templateId:     s.id,
-                templateTitle:  s.title,
-                occurrenceType: s.occurrenceType,
-                dayOfWeek:      s.dayOfWeek,
-                dayOfMonth:     s.dayOfMonth,
-              })));
-            }}
-            renderTags={(value, getTagProps) =>
-              value.map((option, index) => (
-                <Chip
-                  key={option.id}
-                  label={option.title}
-                  size="small"
-                  color="info"
-                  variant="outlined"
-                  {...getTagProps({ index })}
-                />
-              ))
-            }
-            renderOption={(props, option) => (
-              <Box component="li" {...props}>
-                <Box>
-                  <Typography variant="body2" fontWeight={600}>{option.title}</Typography>
-                  <Typography variant="caption" color="text.secondary">{occurrenceBadge(option)}</Typography>
-                </Box>
-              </Box>
-            )}
-            renderInput={params => (
-              <TextField {...params} size="small" label="Search & assign checklist templates"
-                placeholder="Type to search…" />
-            )}
-            isOptionEqualToValue={(opt, val) => opt.id === val.id}
-          />
+          <FirestoreAutocomplete db={db} collectionName="checklistTemplates" value={null}
+            label="Search & assign checklist templates" getOptionLabel={opt => opt.title || ''}
+            sort={[["title", "asc"]]} onChange={(_, selected) => {
+              if (!selected || assignedChecklists.some(cl => cl.templateId === selected.id)) return;
+              setAssignedChecklists(prev => [...prev, { templateId: selected.id, templateTitle: selected.title,
+                occurrenceType: selected.occurrenceType, dayOfWeek: selected.dayOfWeek ?? null, dayOfMonth: selected.dayOfMonth ?? null }]);
+            }} />
 
           {assignedChecklists.length > 0 && (
             <Box mt={2}>
@@ -401,14 +357,7 @@ const EmployeeProfile = () => {
             </Box>
           )}
 
-          {checklistTemplates.length === 0 && (
-            <Alert severity="info" sx={{ mt: 2 }}>
-              No checklist templates found.{' '}
-              <Button size="small" onClick={() => navigate('/checklist-templates/new')}>
-                Create one
-              </Button>
-            </Alert>
-          )}
+
         </CardContent>
       </Card>
 

@@ -1,3 +1,9 @@
+import { computeSalary } from './payroll';
+import { getKnownSnapshot as getDoc } from './employeeData';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { employeeQuery, loadAttendanceMonths, mergePayrollWaivers } from './employeeData';
+import { updateRecord as updateDoc, setRecord as setDoc } from '../../data/writes';
 // src/pages/Employees/SalaryReport.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -14,189 +20,17 @@ import {
   ExpandMore, Refresh, AttachMoney, Warning, CheckCircle,
   Download, Info, Close,
 } from '@mui/icons-material';
-import {
-  collection, query, where, getDocs, doc, getDoc,
-  setDoc, updateDoc, serverTimestamp, orderBy,
-  limit, startAfter, getCountFromServer,
-} from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { formatTime } from './employeeConstants';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(n || 0);
 
 // ── Core salary computation ───────────────────────────────────────────────────
-function computeSalary(employee, attendanceLogs, settings, year, month) {
-  const baseSalary = employee.salary || 0;
-
-  const {
-    expectedDailyHours      = 8,
-    expectedLoginTime       = '09:30',
-    expectedLogoutTime      = '18:30',
-    lateArrivalThreshold    = 15,
-    earlyDepartureThreshold = 15,
-    hourlyDeductionRate     = 50,
-    lateArrivalRate         = 0,
-    earlyDepartureRate      = 0,
-    freeLeavePerMonth       = 1,
-    leavePenaltyAmount      = 200,
-    leavePenaltyEnabled     = true,
-    shortHoursPenaltyEnabled    = true,
-    lateArrivalPenaltyEnabled   = true,
-    earlyDeparturePenaltyEnabled = true,
-  } = settings;
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const [expLoginH, expLoginM] = expectedLoginTime.split(':').map(Number);
-  const [expLogoutH, expLogoutM] = expectedLogoutTime.split(':').map(Number);
-  const expLoginMins  = expLoginH  * 60 + expLoginM;
-  const expLogoutMins = expLogoutH * 60 + expLogoutM;
-
-  let totalWorkMinutes   = 0;
-  let leaveCount         = 0;
-  let presentDays        = 0;
-  let lateCount          = 0;
-  let earlyDepartureCount = 0;
-  let shortHoursMins     = 0;
-  let lateMinutes        = 0;
-  let earlyMinutes       = 0;
-  const breakdownByDay   = [];
-
-  attendanceLogs.forEach(log => {
-    if (log.status === 'leave') {
-      leaveCount++;
-      breakdownByDay.push({ date: log.date, type: 'leave', workMins: 0, late: false, early: false });
-      return;
-    }
-    if (!log.loginTime || !log.logoutTime) return;
-
-    presentDays++;
-    const loginDate  = new Date(log.loginTime);
-    const logoutDate = new Date(log.logoutTime);
-
-    // Total break time
-    const breakMins = (log.breaks || [])
-      .filter(b => b.startTime && b.endTime)
-      .reduce((s, b) => s + (new Date(b.endTime) - new Date(b.startTime)) / 60000, 0);
-
-    const grossWorkMins = (logoutDate - loginDate) / 60000;
-    const netWorkMins   = Math.max(0, grossWorkMins - breakMins);
-    totalWorkMinutes   += netWorkMins;
-
-    // Expected daily hours shortfall
-    const expectedMins = expectedDailyHours * 60;
-    if (netWorkMins < expectedMins) {
-      shortHoursMins += (expectedMins - netWorkMins);
-    }
-
-    // Late arrival
-    const loginMins = loginDate.getHours() * 60 + loginDate.getMinutes();
-    const isLate    = loginMins > expLoginMins + lateArrivalThreshold;
-    if (isLate) {
-      lateCount++;
-      lateMinutes += (loginMins - expLoginMins - lateArrivalThreshold);
-    }
-
-    // Early departure
-    const logoutMins = logoutDate.getHours() * 60 + logoutDate.getMinutes();
-    const isEarly    = logoutMins < expLogoutMins - earlyDepartureThreshold;
-    if (isEarly) {
-      earlyDepartureCount++;
-      earlyMinutes += (expLogoutMins - earlyDepartureThreshold - logoutMins);
-    }
-
-    breakdownByDay.push({
-      date: log.date,
-      type: 'present',
-      workMins: Math.round(netWorkMins),
-      late: isLate,
-      early: isEarly,
-      loginTime: log.loginTime,
-      logoutTime: log.logoutTime,
-      breakMins: Math.round(breakMins),
-    });
-  });
-
-  // ── Penalty Calculation ────────────────────────────────────────────────────
-  const penalties = [];
-
-  if (shortHoursPenaltyEnabled && shortHoursMins > 0) {
-    const shortHrs = shortHoursMins / 60;
-    const deduction = Math.round(shortHrs * hourlyDeductionRate);
-    if (deduction > 0) {
-      penalties.push({
-        id: 'short_hours',
-        type: 'Short Work Hours',
-        description: `${shortHrs.toFixed(1)} hrs short across ${presentDays} working days`,
-        amount: deduction,
-        removed: false,
-      });
-    }
-  }
-
-  if (lateArrivalPenaltyEnabled && lateCount > 0) {
-    const deduction = lateArrivalRate > 0
-      ? Math.round(lateCount * lateArrivalRate)
-      : Math.round((lateMinutes / 60) * hourlyDeductionRate);
-    if (deduction > 0) {
-      penalties.push({
-        id: 'late_arrival',
-        type: 'Late Arrivals',
-        description: `${lateCount} late arrival${lateCount > 1 ? 's' : ''} (${Math.round(lateMinutes)} mins total)`,
-        amount: deduction,
-        removed: false,
-      });
-    }
-  }
-
-  if (earlyDeparturePenaltyEnabled && earlyDepartureCount > 0) {
-    const deduction = earlyDepartureRate > 0
-      ? Math.round(earlyDepartureCount * earlyDepartureRate)
-      : Math.round((earlyMinutes / 60) * hourlyDeductionRate);
-    if (deduction > 0) {
-      penalties.push({
-        id: 'early_departure',
-        type: 'Early Departures',
-        description: `${earlyDepartureCount} early departure${earlyDepartureCount > 1 ? 's' : ''} (${Math.round(earlyMinutes)} mins total)`,
-        amount: deduction,
-        removed: false,
-      });
-    }
-  }
-
-  if (leavePenaltyEnabled && leaveCount > freeLeavePerMonth) {
-    const extraLeaves = leaveCount - freeLeavePerMonth;
-    const deduction   = extraLeaves * leavePenaltyAmount;
-    penalties.push({
-      id: 'leave_excess',
-      type: 'Excess Leaves',
-      description: `${leaveCount} leaves (${freeLeavePerMonth} free, ${extraLeaves} penalised)`,
-      amount: deduction,
-      removed: false,
-    });
-  }
-
-  const totalPenalties = penalties.filter(p => !p.removed).reduce((s, p) => s + p.amount, 0);
-  const netSalary      = Math.max(0, baseSalary - totalPenalties);
-
-  return {
-    baseSalary,
-    presentDays,
-    leaveCount,
-    lateCount,
-    earlyDepartureCount,
-    totalWorkMinutes: Math.round(totalWorkMinutes),
-    penalties,
-    totalPenalties,
-    netSalary,
-    breakdownByDay,
-    daysInMonth,
-  };
-}
-
 // ── Detail Dialog ─────────────────────────────────────────────────────────────
 const SalaryDetailDialog = ({ open, onClose, report, onRemovePenalty, onRestorePenalty, saving }) => {
   if (!report) return null;
@@ -358,16 +192,21 @@ const SalaryReport = () => {
   const now = new Date();
   const [selYear,    setSelYear]    = useState(now.getFullYear());
   const [selMonth,   setSelMonth]   = useState(now.getMonth());
-  const [employees,  setEmployees]  = useState([]);
+  const [search, setSearch] = useState('');
+  const { rows: employees, total, page, setPage, refresh, loading, error } = usePagedCollection(db, 'users', employeeQuery(search));
+  const [reportsIdentity, setReportsIdentity] = useState(null);
+  const [overrideIdentity, setOverrideIdentity] = useState(null);
+  const reportsKey = `${selYear}-${selMonth}:${employees.map(e => e.id).join(',')}`;
   const [reports,    setReports]    = useState({});   // { uid: computedReport }
   const [dbReports,  setDbReports]  = useState({});   // { uid: saved overrides from Firestore }
   const [settings,   setSettings]   = useState(null);
-  const [loading,    setLoading]    = useState(false);
+
+  const [reportError, setReportError] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [saving,     setSaving]     = useState(false);
-  const [total,      setTotal]      = useState(0);
-  const [page,       setPage]       = useState(0);
-  const [cursorMap,  setCursorMap]  = useState({});
+
+
+
   const [detailReport, setDetailReport] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -380,41 +219,6 @@ const SalaryReport = () => {
       .then(snap => setSettings(snap.exists() ? snap.data() : {}))
       .catch(() => setSettings({}));
   }, [db, settingsDocId]);
-
-  // Count employees
-  useEffect(() => {
-    if (!db) return;
-    getCountFromServer(query(collection(db, 'users'), where('role', '==', 'employee')))
-      .then(s => setTotal(s.data().count)).catch(() => {});
-  }, [db, refreshKey]);
-
-  // Load employees page
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        let q;
-        if (page === 0) {
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), limit(PAGE_SIZE));
-        } else {
-          const cursor = cursorMap[page - 1];
-          if (!cursor) return;
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), startAfter(cursor), limit(PAGE_SIZE));
-        }
-        const snap = await getDocs(q);
-        if (snap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-        }
-        setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) {
-        toast.error('Load error: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, page, refreshKey]);
 
   // Load saved report overrides from Firestore
   useEffect(() => {
@@ -431,32 +235,16 @@ const SalaryReport = () => {
           }
         });
         setDbReports(map);
+        setOverrideIdentity({ db, key: `${selYear}-${selMonth}:${employees.map(e => e.id).join(',')}` });
       }).catch(() => {});
   }, [db, employees, selYear, selMonth, refreshKey]);
 
   // Generate reports from attendance data
   const generateReports = useCallback(async () => {
     if (!db || employees.length === 0 || !settings) return;
-    setGenerating(true);
+    setReportError(null); setGenerating(true);
     try {
-      const startDate = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-01`;
-      const daysInMonth = new Date(selYear, selMonth + 1, 0).getDate();
-      const endDate   = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
-      const uids = employees.map(e => e.id);
-
-      const logSnap = await getDocs(
-        query(collection(db, 'attendanceLogs'),
-          where('date', '>=', startDate),
-          where('date', '<=', endDate),
-          where('userId', 'in', uids)
-        )
-      );
-      const logsByUid = {};
-      logSnap.docs.forEach(d => {
-        const data = d.data();
-        if (!logsByUid[data.userId]) logsByUid[data.userId] = [];
-        logsByUid[data.userId].push(data);
-      });
+      const logsByUid = await loadAttendanceMonths(db, employees.map(e => e.id), `${selYear}-${String(selMonth + 1).padStart(2, '0')}`);
 
       const computed = {};
       employees.forEach(emp => {
@@ -464,8 +252,9 @@ const SalaryReport = () => {
         computed[emp.id] = computeSalary(emp, empLogs, settings, selYear, selMonth);
       });
       setReports(computed);
+      setReportsIdentity({ db, key: `${selYear}-${selMonth}:${employees.map(e => e.id).join(',')}` });
     } catch (e) {
-      toast.error('Failed to generate: ' + e.message);
+      setReportError(e);
     } finally {
       setGenerating(false);
     }
@@ -477,26 +266,11 @@ const SalaryReport = () => {
 
   // Merge computed + db overrides
   const getMergedReport = (uid) => {
-    const computed = reports[uid];
+    const computed = reportsIdentity?.db === db && reportsIdentity?.key === reportsKey ? reports[uid] : null;
     if (!computed) return null;
-    const saved = dbReports[uid];
+    const saved = overrideIdentity?.db === db && overrideIdentity?.key === reportsKey ? dbReports[uid] : null;
     if (!saved) return { ...computed, userId: uid, employeeName: employees.find(e => e.id === uid)?.name || '', year: selYear, month: selMonth };
-    // Merge penalties (preserve removed flags from saved)
-    const mergedPenalties = computed.penalties.map(p => {
-      const savedP = saved.penalties?.find(sp => sp.id === p.id);
-      return savedP ? { ...p, removed: savedP.removed } : p;
-    });
-    const totalPenalties = mergedPenalties.filter(p => !p.removed).reduce((s, p) => s + p.amount, 0);
-    return {
-      ...computed,
-      penalties: mergedPenalties,
-      totalPenalties,
-      netSalary: Math.max(0, computed.baseSalary - totalPenalties),
-      userId: uid,
-      employeeName: employees.find(e => e.id === uid)?.name || '',
-      year: selYear,
-      month: selMonth,
-    };
+    return { ...mergePayrollWaivers(computed, saved), userId: uid, employeeName: employees.find(e => e.id === uid)?.name || '', year: selYear, month: selMonth };
   };
 
   const handleRemovePenalty = async (penaltyId) => {
@@ -577,6 +351,9 @@ const SalaryReport = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <TextField size="small" label="Search employees" value={search} onChange={e => setSearch(e.target.value)} sx={{ mb: 2 }} />
+      <QueryStatus error={error || reportError} loading={loading} search={search} />
+      <Typography variant="caption">Salary totals and printed rows cover this employee page.</Typography>
       {/* Header */}
       <Box display="flex" alignItems={{ xs: 'flex-start', sm: 'center' }}
         flexDirection={{ xs: 'column', sm: 'row' }}
@@ -594,7 +371,7 @@ const SalaryReport = () => {
           </Typography>
           <IconButton onClick={nextMonth}><ArrowForward /></IconButton>
           <Tooltip title="Refresh & recalculate">
-            <IconButton onClick={() => { setPage(0); setCursorMap({}); setRefreshKey(k => k+1); }}>
+            <IconButton onClick={() => { setPage(0); refresh(); setRefreshKey(k => k+1); }}>
               <Refresh />
             </IconButton>
           </Tooltip>
@@ -720,8 +497,8 @@ const SalaryReport = () => {
                 </TableBody>
               </Table>
             </TableContainer>
-            <TablePagination component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); if (p === 0) setCursorMap({}); }}
+            <TablePagination component="div" count={total ?? -1} page={page}
+              onPageChange={(_, p) => { setPage(p); if (p === 0) refresh(); }}
               rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
           </>
         )}

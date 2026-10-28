@@ -1,3 +1,7 @@
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import EmployeePageControls from './EmployeePageControls';
+import { employeeQuery, loadChecklistDays } from './employeeData';
 // src/pages/Employees/ChecklistAdminView.js
 import React, { useState, useEffect } from 'react';
 import {
@@ -14,10 +18,7 @@ import {
   Refresh, ArrowBack, ArrowForward, ExpandMore, ExpandLess,
   Assignment, Warning,
 } from '@mui/icons-material';
-import {
-  collection, query, where, getDocs, orderBy,
-  limit, startAfter, getCountFromServer,
-} from 'firebase/firestore';
+
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { getTodayStr, formatTime } from './employeeConstants';
@@ -31,93 +32,63 @@ const ChecklistDailyView = ({ db }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [selDate,    setSelDate]    = useState(getTodayStr());
-  const [employees,  setEmployees]  = useState([]);
-  const [instances,  setInstances]  = useState([]);
+  const [search, setSearch] = useState('');
+  const employeePage = usePagedCollection(db, 'users', employeeQuery(search));
+  const { rows: employees, page, total, setPage, refresh } = employeePage;
+  const [summaries, setSummaries] = useState([]);
+  const [summaryError, setSummaryError] = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [expandedEmp, setExpandedEmp] = useState(null);
-  const [page,       setPage]       = useState(0);
-  const [total,      setTotal]      = useState(0);
-  const [cursorMap,  setCursorMap]  = useState({});
+
+
+
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const taskPage = usePagedCollection(expandedEmp ? db : null, 'checklistInstances', { filters: [['userId', '==', expandedEmp || ''], ['date', '==', selDate]], sort: [['createdAt', 'asc']], pageSize: 15 });
   useEffect(() => {
     if (!db) return;
-    getCountFromServer(query(collection(db, 'users'), where('role', '==', 'employee')))
-      .then(s => setTotal(s.data().count)).catch(() => {});
-  }, [db, refreshKey]);
+    let active = true;
+    setSummaries([]); setExpandedEmp(null); setSummaryError(null); setLoading(true);
+    loadChecklistDays(db, employees.map(e => e.id), [selDate])
+      .then(rows => { if (active) setSummaries(rows); })
+      .catch(e => { if (active) setSummaryError(e); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [db, selDate, employees, refreshKey]);
 
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        let q;
-        if (page === 0) {
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), limit(PAGE_SIZE));
-        } else {
-          const cursor = cursorMap[page - 1];
-          if (!cursor) return;
-          q = query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name'), startAfter(cursor), limit(PAGE_SIZE));
-        }
-        const empSnap = await getDocs(q);
-        const emps = empSnap.docs.map(d => ({ id: d.id, ...d.data(), _snap: d }));
-        if (empSnap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: empSnap.docs[empSnap.docs.length - 1] }));
-        }
-        setEmployees(emps);
-
-        const uids = emps.map(e => e.id);
-        if (uids.length > 0) {
-          const clSnap = await getDocs(
-            query(collection(db, 'checklistInstances'),
-              where('date', '==', selDate),
-              where('userId', 'in', uids)
-            )
-          );
-          setInstances(clSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-        } else {
-          setInstances([]);
-        }
-      } catch (e) {
-        toast.error('Failed to load: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, selDate, page, refreshKey]);
-
-  const getEmpChecklists = (uid) => instances.filter(i => i.userId === uid);
-
-  const getEmpStats = (uid) => {
-    const items = getEmpChecklists(uid);
-    const done  = items.filter(i => i.completed).length;
-    return { total: items.length, done, pct: items.length > 0 ? Math.round((done / items.length) * 100) : null };
+  const getEmpChecklists = uid => expandedEmp === uid ? taskPage.rows : [];
+  const getEmpStats = uid => {
+    const summary = summaries.find(row => row.userId === uid);
+    const total = summary?.totalCount || 0, done = summary?.completedCount || 0;
+    return { total, done, pct: total ? Math.round(done / total * 100) : null };
   };
 
   const allWithItems = employees.filter(e => getEmpStats(e.id).total > 0);
   const allComplete  = allWithItems.filter(e => { const s = getEmpStats(e.id); return s.done === s.total; });
   const noneStarted  = employees.filter(e => getEmpStats(e.id).total === 0);
 
+  if (summaryError) return <Box><EmployeePageControls search={search} setSearch={setSearch} result={employeePage} /><QueryStatus error={summaryError} loading={false} /><Button onClick={() => window.location.reload()}>Reload summaries</Button></Box>;
   return (
     <Box>
+      <EmployeePageControls search={search} setSearch={setSearch} result={employeePage} />
+      <Typography variant="caption">Completion totals cover this employee page; task counts cover each full day.</Typography>
       {/* Date picker + summary */}
       <Box display="flex" alignItems={{ xs: 'flex-start', sm: 'center' }}
         flexDirection={{ xs: 'column', sm: 'row' }} gap={2} mb={3}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Button size="small" variant="outlined"
-            onClick={() => { const d = new Date(selDate); d.setDate(d.getDate() - 1); setSelDate(d.toISOString().split('T')[0]); setPage(0); setCursorMap({}); }}>
+            onClick={() => { const d = new Date(selDate); d.setDate(d.getDate() - 1); setSelDate(d.toISOString().split('T')[0]); setPage(0); refresh(); }}>
             ‹ Prev
           </Button>
           <input type="date" value={selDate}
-            onChange={e => { setSelDate(e.target.value); setPage(0); setCursorMap({}); }}
+            onChange={e => { setSelDate(e.target.value); setPage(0); refresh(); }}
             style={{ padding: '6px 10px', border: '1px solid #ccc', borderRadius: 6, fontSize: 14 }} />
           <Button size="small" variant="outlined" disabled={selDate >= getTodayStr()}
-            onClick={() => { const d = new Date(selDate); d.setDate(d.getDate() + 1); setSelDate(d.toISOString().split('T')[0]); setPage(0); setCursorMap({}); }}>
+            onClick={() => { const d = new Date(selDate); d.setDate(d.getDate() + 1); setSelDate(d.toISOString().split('T')[0]); setPage(0); refresh(); }}>
             Next ›
           </Button>
         </Stack>
-        <IconButton size="small" onClick={() => { setPage(0); setCursorMap({}); setRefreshKey(k => k + 1); }}>
+        <IconButton size="small" onClick={() => { setPage(0); refresh(); setRefreshKey(k => k + 1); }}>
           <Refresh />
         </IconButton>
       </Box>
@@ -199,7 +170,7 @@ const ChecklistDailyView = ({ db }) => {
                             )}
                           </TableCell>
                           <TableCell align="center">
-                            {items.length > 0 && (
+                            {stats.total > 0 && (
                               <IconButton size="small" onClick={() => setExpandedEmp(isExpanded ? null : emp.id)}>
                                 {isExpanded ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
                               </IconButton>
@@ -212,6 +183,8 @@ const ChecklistDailyView = ({ db }) => {
                           <TableRow>
                             <TableCell colSpan={4} sx={{ p: 0, bgcolor: 'grey.50' }}>
                               <Box sx={{ px: 3, py: 1.5 }}>
+                                <QueryStatus error={taskPage.error} loading={taskPage.loading} />
+                                <TablePagination component="div" count={taskPage.total ?? -1} page={taskPage.page} rowsPerPage={15} rowsPerPageOptions={[15]} onPageChange={(_, p) => taskPage.setPage(p)} nextIconButtonProps={{ disabled: !taskPage.hasNext || taskPage.loading }} />
                                 <Stack spacing={0.75}>
                                   {items.map(cl => (
                                     <Box key={cl.id} display="flex" alignItems="flex-start" justifyContent="space-between"
@@ -254,8 +227,8 @@ const ChecklistDailyView = ({ db }) => {
                 </TableBody>
               </Table>
             </TableContainer>
-            <TablePagination component="div" count={total} page={page}
-              onPageChange={(_, p) => { setPage(p); if (p === 0) setCursorMap({}); }}
+            <TablePagination component="div" count={total ?? -1} page={page}
+              onPageChange={(_, p) => { setPage(p); if (p === 0) refresh(); }}
               rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]} />
           </>
         )}
@@ -269,8 +242,11 @@ const ChecklistMonthlyView = ({ db }) => {
   const now = new Date();
   const [selYear,   setSelYear]   = useState(now.getFullYear());
   const [selMonth,  setSelMonth]  = useState(now.getMonth());
-  const [employees, setEmployees] = useState([]);
+  const [search, setSearch] = useState('');
+  const employeePage = usePagedCollection(db, 'users', employeeQuery(search));
+  const employees = employeePage.rows;
   const [instances, setInstances] = useState([]);
+  const [summaryError, setSummaryError] = useState(null);
   const [loading,   setLoading]   = useState(false);
   const [selEmp,    setSelEmp]    = useState('all');
 
@@ -279,45 +255,29 @@ const ChecklistMonthlyView = ({ db }) => {
 
   useEffect(() => {
     if (!db) return;
-    getDocs(query(collection(db, 'users'), where('role', '==', 'employee'), orderBy('name')))
-      .then(snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
-  }, [db]);
-
-  useEffect(() => {
-    if (!db) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const startDate = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-01`;
-        const endDate   = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
-        const snap = await getDocs(
-          query(collection(db, 'checklistInstances'),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate)
-          )
-        );
-        setInstances(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) {
-        toast.error('Failed: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [db, selYear, selMonth, daysInMonth]);
+    let active = true;
+    setInstances([]); setSummaryError(null); setLoading(true);
+    const dates = dayNums.map(day => `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+    loadChecklistDays(db, employees.map(e => e.id), dates)
+      .then(rows => { if (active) setInstances(rows); })
+      .catch(e => { if (active) setSummaryError(e); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [db, employees, selYear, selMonth, daysInMonth]);
 
   const filteredEmps = selEmp === 'all' ? employees : employees.filter(e => e.id === selEmp);
 
   const getDayStats = (uid, day) => {
     const dateStr = `${selYear}-${String(selMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const items = instances.filter(i => i.userId === uid && i.date === dateStr);
-    if (items.length === 0) return null;
-    const done = items.filter(i => i.completed).length;
-    return { total: items.length, done, pct: Math.round((done / items.length) * 100) };
+    const summary = instances.find(i => i.userId === uid && i.date === dateStr);
+    if (!summary?.totalCount) return null;
+    return { total: summary.totalCount, done: summary.completedCount, pct: Math.round(summary.completedCount / summary.totalCount * 100) };
   };
 
+  if (summaryError) return <Box><EmployeePageControls search={search} setSearch={setSearch} result={employeePage} /><QueryStatus error={summaryError} loading={false} /><Button onClick={() => window.location.reload()}>Reload summaries</Button></Box>;
   return (
     <Box>
+      <EmployeePageControls search={search} setSearch={setSearch} result={employeePage} />
       {/* Controls */}
       <Box display="flex" alignItems="center" gap={2} mb={3} flexWrap="wrap">
         <Stack direction="row" spacing={1} alignItems="center">

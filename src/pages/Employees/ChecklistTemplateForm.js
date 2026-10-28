@@ -1,3 +1,5 @@
+import { getKnownSnapshot as getDoc } from './employeeData';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
 // src/pages/Employees/ChecklistTemplateForm.js
 import React, { useState, useEffect } from 'react';
 import {
@@ -7,9 +9,7 @@ import {
   ToggleButtonGroup, ToggleButton, Chip, Stack,
 } from '@mui/material';
 import { ArrowBack, Save, Checklist } from '@mui/icons-material';
-import {
-  collection, addDoc, updateDoc, doc, getDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
