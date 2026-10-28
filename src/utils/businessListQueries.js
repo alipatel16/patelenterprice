@@ -52,5 +52,7 @@ export function businessListOptions(name, { search = '', month = '', dateFrom = 
     filters.push(...complaintFilters(status, assigneeFilter, urgencyFilter));
     sort = status === 'history' ? [['createdAt', 'desc']] : [['complaintDueDate', 'asc'], ['createdAt', 'desc']];
   }
-  return { search, filters, sort, pageSize: 15 };
+  // Ordering by a migration-added field would silently omit legacy rows.
+  const requireReady = sort.some(([field]) => field === 'nameLower' || field === 'complaintDueDate');
+  return { search, filters, sort, pageSize: 15, requireReady };
 }

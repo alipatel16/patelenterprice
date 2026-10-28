@@ -1,9 +1,9 @@
 // Additive schema: display fields are never rewritten. Keep migration and writes
 // on this same generator so readiness means all indexed records are searchable.
 const TEXT_FIELDS = ['name', 'title', 'maker', 'category', 'hsnCode', 'email',
-  'customerName', 'customerEmail', 'supplierName', 'invoiceNumber', 'quotationNumber',
+  'customerName', 'customerEmail', 'supplierName', 'invoiceNumber', 'quotationNumber', 'quoteNumber',
   'complaintNumber', 'invoiceNo', 'quotationNo', 'complaintNo', 'brand', 'brandName',
-  'giftSetName', 'productName', 'employeeName', 'salespersonName', 'referenceNumber'];
+  'giftSetName', 'productName', 'employeeName', 'salespersonName', 'referenceNumber', 'exchangeItem'];
 const PHONE_FIELDS = ['phone', 'customerPhone', 'supplierPhone', 'employeePhone'];
 export const SEARCH_SCHEMA_VERSION = 2;
 export const SEARCH_LIMITS = { fieldCharacters: 160, tokens: 2000, tokenBytes: 100000 };
@@ -30,15 +30,22 @@ export function buildSearchTokens(collectionName, data = {}) {
     text.split(/[\s\p{P}]+/u).filter(Boolean).forEach(add);
   }
   for (const field of PHONE_FIELDS) {
-    const digits = normalizeSearch(data[field]).replace(/\D/g, '');
-    if (!digits) continue;
-    if (digits.length > 15) throw new Error(`Unsupported search phone length in ${collectionName}`);
-    const forms = new Set([digits]);
-    if (digits.length === 12 && digits.startsWith('91')) forms.add(digits.slice(2));
-    if (digits.length === 10) forms.add(`91${digits}`);
-    for (const form of forms) {
-      add(form);
-      for (let i = 2; i <= form.length; i++) tokens.add(form.slice(-i));
+    const raw = String(data[field] ?? '').normalize('NFKC');
+    const combined = raw.replace(/\D/g, '');
+    // Legacy forms allow several numbers in one field. A hyphen remains phone
+    // formatting unless the combined value is too long to be one phone number.
+    const numbers = combined.length > 15 ? raw.split(/[/\\|,;\-]+/u) : [raw];
+    for (const number of numbers) {
+      const digits = number.replace(/\D/g, '');
+      if (!digits) continue;
+      if (digits.length > 15) throw new Error(`Unsupported search phone length in ${collectionName}`);
+      const forms = new Set([digits]);
+      if (digits.length === 12 && digits.startsWith('91')) forms.add(digits.slice(2));
+      if (digits.length === 10) forms.add(`91${digits}`);
+      for (const form of forms) {
+        add(form);
+        for (let i = 2; i <= form.length; i++) tokens.add(form.slice(-i));
+      }
     }
   }
   const result = [...tokens].sort();

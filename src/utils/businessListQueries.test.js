@@ -2,16 +2,18 @@ import fs from 'fs';
 import path from 'path';
 import { businessListOptions, complaintFilters, indiaDate } from './businessListQueries';
 import { fetchPage } from '../data/query';
-import { getDocs, getDoc, getCountFromServer } from 'firebase/firestore';
+import { buildSearchTokens, normalizeSearch } from '../data/search';
+import { getDocs, getDoc, getCountFromServer, query } from 'firebase/firestore';
 jest.mock('firebase/firestore', () => ({
   collection: (db, name) => ({ db, name }), doc: (db, name, id) => ({ db, name, id }),
-  query: (ref, ...constraints) => ({ ...ref, constraints }), where: (...args) => ({ type: 'where', args }),
+  query: jest.fn((ref, ...constraints) => ({ ...ref, constraints })), where: (...args) => ({ type: 'where', args }),
   orderBy: (...args) => ({ type: 'orderBy', args }), limit: n => ({ type: 'limit', n }), startAfter: value => ({ type: 'cursor', value }),
   Timestamp: { fromDate: date => date.getTime() }, getDocs: jest.fn(), getDoc: jest.fn(), getCountFromServer: jest.fn(),
 }));
 const names = ['customers', 'products', 'purchases', 'inventory', 'sales', 'quotations', 'giftInvoices', 'giftSets', 'brandHierarchies', 'complaints'];
 beforeEach(() => {
   jest.clearAllMocks();
+  query.mockImplementation((ref, ...constraints) => ({ ...ref, constraints }));
   getDoc.mockResolvedValue({ exists: () => true, data: () => ({ version: 2, readyCollections: names }) });
   getCountFromServer.mockResolvedValue({ data: () => ({ count: 1 }) });
   getDocs.mockImplementation(async request => {
@@ -62,4 +64,34 @@ test('complaint display urgency uses the same India date and normalized missing-
   expect(complaintUrgency({ status: 'open', complaintDueDate: '2026-11-01' }, '2026-10-28')).toBe('due_soon');
   expect(complaintUrgency({ status: 'open', complaintDueDate: '9999-12-31' }, '2026-10-28')).toBe('normal');
   expect(complaintUrgency({ status: 'closed', complaintDueDate: '2026-10-27' }, '2026-10-28')).toBe('normal');
+});
+
+test.each([
+  ['customers', {}], ['products', {}],
+  ['complaints', { status: 'open' }], ['complaints', { status: 'in_progress' }],
+])('%s browse rejects unready migration fields before constructing a collection query', async (name, state) => {
+  getDoc.mockResolvedValue({ exists: () => true, data: () => ({ version: 2, readyCollections: [] }) });
+  await expect(fetchPage({}, name, businessListOptions(name, state))).rejects.toMatchObject({ code: 'data-access/not-ready' });
+  expect(query).not.toHaveBeenCalled();
+  expect(getDocs).not.toHaveBeenCalled();
+  expect(getCountFromServer).not.toHaveBeenCalled();
+});
+test('quotation search finds the actual saved quoteNumber schema beyond the first synthetic page', async () => {
+  const term = normalizeSearch('QT-PE-2026-0042');
+  getDocs.mockImplementation(async request => {
+    let rows = Array.from({ length: 400 }, (_, i) => {
+      const source = { quoteNumber: i === 399 ? 'QT-PE-2026-0042' : `QT-OTHER-${i}`, customerName: 'Synthetic Customer', createdAt: i };
+      return { id: String(i), ...source, searchTokens: buildSearchTokens('quotations', source) };
+    });
+    for (const constraint of request.constraints) {
+      if (constraint.type === 'where') {
+        const [field, operator, value] = constraint.args;
+        if (operator === 'array-contains') rows = rows.filter(row => row[field].includes(value));
+      }
+      if (constraint.type === 'limit') rows = rows.slice(0, constraint.n);
+    }
+    return { docs: rows.map(row => ({ id: row.id, data: () => row })) };
+  });
+  const result = await fetchPage({}, 'quotations', businessListOptions('quotations', { search: term }));
+  expect(result.rows.map(row => row.id)).toEqual(['399']);
 });
