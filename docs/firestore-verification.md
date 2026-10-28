@@ -1,0 +1,21 @@
+# Scoped final fix rereview
+
+Reviewed `4eca35f..c85ab08` and the original final review and fix reports. Scope is the three original findings, changes made in this fix wave (including index generation and rollout/emulator updates), and the Task 7 final integration gate. No tests were rerun, production accessed, or application files edited in this rereview. The verification results below are executor/controller-reported evidence, not independent reruns.
+
+## Findings
+
+1. **P1 stale invoice edit: ADDRESSED.** `CreateSale` retains the revision of the sale loaded into the form and `saveSaleEdit` compares it with the current source inside `mutateRecord`. A supported payment, reschedule, delivery, or other intervening source write changes the revision, causing the stale edit to fail with a reload message instead of overwriting the newer history. The adapter increments the revision within its transaction; transaction retries recheck it. This deliberately requires the user to reload and re-enter a stale edit. The reported regression combines receipt, due-date and delivery changes, and the real SDK emulator test checks stale rejection after concurrent payments.
+
+2. **P1 concurrent inventory arithmetic: ADDRESSED.** After resolving the existing unique inventory row, both sale and purchase deltas now calculate stock and counters from the fresh value supplied to `mutateRecord`, including on retries, with the existing zero floors retained. Reported tests cover concurrent sale and purchase deltas and retry behavior, plus real SDK emulator contention. The separate invoice and inventory operations and concurrent creation of a first inventory mapping remain outside this finding's agreed scope.
+
+3. **P2 stale custom report rankings: ADDRESSED.** Each custom ranking page/search/metric load routes through `fetchCustomReportPage`, which checks the job and source revision before and after the page fetch. The hook clears or withholds rows for a changed query identity and ignores late responses; an error invalidates the job and hides rankings. Reported tests cover same-page search and metric changes following a remote revision change and a revision change during a query. Freshness is established at the post-fetch revision read; there is no continuous cross-client listener.
+
+## Fix-wave review
+
+No additional blocking breakage identified in the scoped fix diff. The sales index generator removes company-filter combinations that the current SalesList does not request; its new test inspects the screen's actual filter arguments, and the reported generator tests retain the 20 baseline shapes. The resulting 146-index configuration must still be checked against the deployed inventory and actual Native-mode query acceptance. The emulator additions exercise the intended stale-edit and stock-contention paths. The rollout documentation correctly treats temporary billing as permitted one-time migration capacity, retains explicit budgets and separate production approval, and distinguishes estimates from actual production storage and costs.
+
+## Task 7 gate
+
+**Spec compliance: PASS within the reviewed implementation and evidence; production rollout gates remain open.** The three issues that prevented the earlier integration gate are addressed. The supplied final evidence reports 185 application tests in 30 suites, 24 Node tests with one opt-in skip, a separately passing real SDK emulator suite, a successful normal build (`main.2816b51b.js`), complete offline and transaction simulations with zero errors, and a 103-site source census with zero violations. These results were not rerun by this reviewer. The census establishes routing and bounded-read dispositions, not correctness by itself; the focused concurrency and transport tests provide complementary evidence.
+
+**Quality: PASS for the scoped fixes and integration evidence.** No remaining must-fix or should-fix finding was identified in this rereview. This is not a fresh broad review of untouched code and does not assert production readiness: actual index build/query acceptance, storage and billing, current usage, migration results, and separately authorized production cutover remain rollout checks. Furniture billing was reported enabled and Electronics disabled at the documented read-only check; no agent changed billing.

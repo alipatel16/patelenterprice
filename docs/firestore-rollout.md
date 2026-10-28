@@ -10,6 +10,7 @@ Employee calendars/payroll use visible employee-month summaries. Reports query r
 
 ## Verification on 28 October 2026
 
+- Independent final scoped review: all financial-concurrency/report findings addressed; implementation and integration gate passed. See `firestore-verification.md`. Live rollout checks remain separate.
 - Application: 30 Jest suites, **185 tests passed**; normal lint-enabled `npm run build` compiled successfully (`main.2816b51b.js`).
 - Tooling: `node --test scripts/*.test.cjs`: **24 passed**, one opt-in emulator test skipped. The opt-in test was run separately and passed.
 - Real SDK 10.14.1 / Firestore emulator 1.22.0 / Java 21: authenticated versus anonymous access, old-client write/delete rejection, 15-row pages, historical name/phone search, three concurrent payments plus replay, stale invoice-edit rejection, simultaneous stock movements, receipt/queue balances, aggregate dashboard, current-source REST backfill, idempotent repeat, and Unicode document deletion passed with synthetic records.
