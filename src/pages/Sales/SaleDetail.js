@@ -437,7 +437,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
   const submission = useRef(null);
 
   useEffect(() => {
-    if (open && installment) { setNewDate(installment.dueDate || ''); setReason(''); setError(''); }
+    if (open && installment) { submission.current = null; setNewDate(installment.dueDate || ''); setReason(''); setError(''); }
   }, [open, installment]);
 
   const handleSave = async () => {
@@ -445,7 +445,7 @@ const ChangeDueDateDialog = ({ open, onClose, installment, onSave }) => {
     if (!reason.trim()) { setError('Reason is required'); return; }
     if (newDate === installment.dueDate) { setError('New date is same as current'); return; }
     const payload = { newDate, reason };
-    const key = JSON.stringify(payload);
+    const key = JSON.stringify({ installmentNumber: installment.installmentNumber, ...payload });
     if (submission.current?.key !== key) submission.current = { key, operationId: newPaymentOperationId() };
     setLoading(true);
     try { await onSave({ ...payload, operationId: submission.current.operationId }); onClose(); }

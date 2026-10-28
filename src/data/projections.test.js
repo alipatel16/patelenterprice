@@ -79,3 +79,10 @@ it('projects EMI badge metadata without duplicating receipt or reschedule histor
   expect(row).not.toHaveProperty('dueDateChanges');
   expect(buildEmiDueDocuments('s', sale)[0].data).toMatchObject({ emiMonths: 2, dueDateChangeCount: 0 });
 });
+
+it('validates a nonnegative legacy paid baseline plus recorded receipts', () => {
+  const one = { ...sale, totalPaidAmount: 350, emiInstallments: [{ installmentNumber: 1, amount: 800, paidAmount: 150, paidAmountBaseline: 100, payments: [{ amount: 50 }], dueDate: '2026-11-05' }] };
+  expect(deriveSaleState(one).financialReconciliationRequired).toBe(false);
+  expect(deriveSaleState({ ...one, emiInstallments: [{ ...one.emiInstallments[0], paidAmountBaseline: -1 }] }).financialReconciliationRequired).toBe(true);
+  expect(deriveSaleState({ ...one, emiInstallments: [{ ...one.emiInstallments[0], paidAmountBaseline: 99 }] }).financialReconciliationRequired).toBe(true);
+});

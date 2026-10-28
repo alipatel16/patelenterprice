@@ -74,3 +74,14 @@ it('recognizes other receipt-derived paid installments when finalizing an EMI in
   const sale = await actions.recordEmiPayment(store.db, 's1', 2, receipt(400), 'legacy-final');
   expect(sale.paymentStatus).toBe('paid'); expect(sale.hasPendingEmi).toBe(false);
 });
+
+it('preserves scalar-only legacy paid amounts through concurrent payments and replay', async () => {
+  const { store, actions, seed } = setup({ ...emi, totalPaidAmount: 300, emiInstallments: [{ ...emi.emiInstallments[0], paidAmount: 100, legacyField: 'keep' }] }); await seed();
+  await Promise.all([actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'a'), actions.recordEmiPayment(store.db, 's1', 1, receipt(75), 'b')]);
+  const sale = await actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'a');
+  expect(store.retries).toBeGreaterThan(0);
+  expect(sale.emiInstallments[0]).toMatchObject({ paidAmountBaseline: 100, paidAmount: 225, legacyField: 'keep' });
+  expect(sale.emiInstallments[0].payments.map(p => p.amount).sort((a,b) => a-b)).toEqual([50,75]);
+  expect(sale.financialReconciliationRequired).toBe(false);
+  expect(store.records.get('emiDues/s1_1').remainingAmount).toBe(575);
+});

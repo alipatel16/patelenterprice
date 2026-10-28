@@ -88,7 +88,7 @@ const EmiList = () => {
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState(0);
   const filters = [['paymentType', '==', PAYMENT_TYPES.EMI], ...(tab === 0 ? [['hasPendingEmi', '==', true]] : [])];
-  const view = usePagedCollection(isAdmin ? db : null, 'sales', { search, filters, sort: [['saleDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
+  const view = usePagedCollection(isAdmin ? db : null, 'sales', { search, filters, sort: tab === 0 ? [['nextEmiDueDate', 'asc']] : [['saleDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
   const { rows, loading, page, setPage } = view;
   const totals = useQueueTotals(isAdmin ? db : null, 'sales', [{ name: 'sales', filters, sums: { pending: 'emiOutstandingAmount', grand: 'grandTotal' } }], search);
   const totalPending = totals.data?.sales.pending;

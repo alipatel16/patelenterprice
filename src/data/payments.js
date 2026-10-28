@@ -39,7 +39,8 @@ export function createPaymentActions({ doc: reference = doc, mutateRecord: mutat
         const priorPaid = installmentPaid(target), amount = numeric(target.amount);
         if (receipt.amount > roundMoney(amount - priorPaid)) fail('Payment exceeds the current installment balance');
         const emiInstallments = current.emiInstallments.map(inst => inst !== target ? inst : {
-          ...inst, paidAmount: roundMoney(priorPaid + receipt.amount),
+          ...inst, ...(!(inst.payments || []).length && inst.paidAmountBaseline === undefined && priorPaid > 0 ? { paidAmountBaseline: priorPaid } : {}),
+          paidAmount: roundMoney(priorPaid + receipt.amount),
           status: roundMoney(priorPaid + receipt.amount) >= amount ? 'paid' : 'partial', payments: [...(inst.payments || []), receipt],
         });
         const totalPaidAmount = roundMoney(numeric(current.totalPaidAmount ?? 0) + receipt.amount);

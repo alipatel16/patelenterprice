@@ -38,11 +38,13 @@ function analyzeSale(sale) {
     const amount = money(inst.amount);
     const receipts = Array.isArray(inst.payments) ? inst.payments.map(payment => money(payment.amount)) : [];
     const historyPaid = receipts.some(value => value === null) ? null : sum(receipts);
-    const paid = money(inst.paidAmount ?? (receipts.length ? historyPaid : 0));
+    const baseline = inst.paidAmountBaseline === undefined ? 0 : money(inst.paidAmountBaseline);
+    const paid = money(inst.paidAmount ?? (receipts.length && historyPaid !== null && baseline !== null ? sum([baseline, historyPaid]) : 0));
     if (amount === null) warn(`${prefix}-invalid-amount`);
     if (paid === null) warn(`${prefix}-invalid-paid-amount`);
     if (historyPaid === null) warn(`${prefix}-invalid-payment-history`);
-    if (receipts.length && paid !== null && historyPaid !== null && Math.abs(paid - historyPaid) > 0.009) warn(`${prefix}-payment-history-mismatch`);
+    if (baseline === null) warn(`${prefix}-invalid-paid-baseline`);
+    if ((receipts.length || inst.paidAmountBaseline !== undefined) && paid !== null && historyPaid !== null && baseline !== null && Math.abs(paid - sum([baseline, historyPaid])) > 0.009) warn(`${prefix}-payment-history-mismatch`);
     if (amount !== null && paid !== null && paid > amount) warn(`${prefix}-overpaid`);
     if (inst.status === 'paid' && amount !== null && paid !== null && paid < amount) warn(`${prefix}-paid-status-mismatch`);
     const dueDate = validDate(inst.dueDate) ? inst.dueDate : null;

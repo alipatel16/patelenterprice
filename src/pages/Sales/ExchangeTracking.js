@@ -7,7 +7,7 @@ import {
   InputAdornment, Tooltip,
 } from '@mui/material';
 import {
-  SwapHoriz, CheckCircle, Search, DoneAll,
+  SwapHoriz, CheckCircle, Search, DoneAll, Inbox,
 } from '@mui/icons-material';
 import { doc, serverTimestamp } from 'firebase/firestore';
 import { updateRecord } from '../../data/writes';
