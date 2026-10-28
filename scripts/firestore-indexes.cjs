@@ -62,7 +62,12 @@ function runtimeQueryShapes() {
   for (const metric of ['revenue', 'quantity', 'invoiceCount']) add('reportJobRows', { filters: [['jobId', '==', 'j1'], ['asOfRevision', '==', 1]], sort: [[metric, 'desc']] });
   shapes.push({ collection: 'reportJobRows', options: { filters: [['jobId', '==', 'j1'], ['asOfRevision', '==', 1]], sums: ['quantity', 'revenue', 'invoiceCount', 'reconciliationCount', 'undatedInvoiceCount'] } });
   for (const dated of [false, true]) add('sales', { filters: [['reportEmployeeKey', '==', 'legacy:test'], ...(dated ? [['saleDate', '>=', '2026-10-01'], ['saleDate', '<=', '2026-10-28']] : [])], sort: [['saleDate', 'desc']] });
-  return shapes;
+  // Page totals are issued without the list ordering. A range count therefore
+  // needs its own implicit ascending range index, even when the page sorts down.
+  const counts = shapes.filter(({ options }) => !options.sums && options.filters?.some(([, op]) =>
+    ['<', '<=', '>', '>=', '!=', 'not-in'].includes(op)))
+    .map(({ collection, options }) => ({ collection, options: { filters: options.filters, count: true } }));
+  return [...shapes, ...counts];
 }
 function generateIndexes() {
   const indexes = new Map();

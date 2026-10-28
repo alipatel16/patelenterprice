@@ -63,3 +63,13 @@ test('implicit inequality order inherits the last explicit descending order', ()
   const index=indexForQuery('complaints',{filters:[['status','in',['resolved','closed']],['complaintDueDate','<','2026-10-28']],sort:[['createdAt','desc']]});
   assert.deepEqual(index.fields,[{fieldPath:'status',order:'ASCENDING'},{fieldPath:'createdAt',order:'DESCENDING'},{fieldPath:'complaintDueDate',order:'DESCENDING'}]);
 });
+
+test('range-filtered page totals have separate ascending count indexes without list-only sort fields', () => {
+  const keys = new Set(generateIndexes().indexes.map(index => JSON.stringify(index)));
+  const cases = [
+    ['complaints', { filters: [['status', '==', 'open'], ['complaintDueDate', '<', '2026-10-28']] }],
+    ['complaints', { filters: [['status', '==', 'open'], ['assigneeType', '==', 'internal'], ['complaintDueDate', '<', '2026-10-28'], ['searchTokens', 'array-contains', 'pa']] }],
+    ['sales', { filters: [['paymentType', '==', 'emi'], ['saleDate', '>=', '2026-10-01'], ['saleDate', '<=', '2026-10-31'], ['searchTokens', 'array-contains', 'pa']] }],
+  ];
+  for (const [collection, options] of cases) assert.ok(keys.has(JSON.stringify(indexForQuery(collection, options))), `missing count index: ${collection} ${JSON.stringify(options.filters)}`);
+});

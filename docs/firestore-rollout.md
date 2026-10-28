@@ -27,6 +27,12 @@ Invoice details recompute validation from the requested invoice rather than trus
 
 Validation: 198 application tests across 31 suites; 28 Node tooling tests passed with one opt-in emulator test skipped; production build succeeded (`main.8b13fbb1.js`). Scoped code review initially caught two compatibility edges, both reproduced and fixed; its final review found no further actionable issues. The database flag refresh is live; this frontend correction must be used from the updated checkout/build or deployed by the owner for hosted users.
 
+## List-total index correction — 29 October 2026
+
+Complaint urgency filtering exposed a missing index family: `fetchPage` counts matching records without the list's explicit ordering. Earlier live checks exercised page and sum queries, but omitted these separate count queries. Both projects reproduced 47 failing count shapes among 162 distinct list-count checks, all involving range predicates. The generator now includes filter-only count shapes with Firestore's implicit ascending range order. It adds 39 composite indexes (192 total), preserves all prior 153 indexes and field overrides, and remains below the 200-index unbilled-project limit enforced by the generator. Both index deployments succeeded, and all 192 indexes reached READY in each store. Post-build checks passed all 264 page/count/sum query variants and all 162 distinct list-count queries in each project with zero errors. No security rule update was needed; the deployed rules were compared to the local file and matched for both projects.
+
+The regression was reproduced before the generator fix. The Node suite has 29 passing tests and one opt-in emulator test skipped; the application suite remains at 198 passing tests in 31 suites. Scoped review found no actionable issue. Native index readiness and post-build page/count/aggregate results are retained privately in `firestore-audit`; an index deployment success alone does not establish build readiness.
+
 ## Result
 
 All business lists use server filters, cursor pages of 15, and search after two normalized characters with a 300 ms pause. Dates are optional filters. Search covers name-word prefixes, phone beginnings/endings (including multiple numbers in a legacy field), and actual stored reference fields. The dashboard opens on Today and loads server aggregates only when requested. EMI dues have an independent unpaid-installment queue, with complete count/amount aggregates and a review tab for uncertain legacy records. Delivery and payment status remain independent.
