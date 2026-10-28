@@ -53,7 +53,8 @@ test('known-ID cache deduplicates and isolates databases/users; invalidation rej
   let resolve; getDoc.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
   invalidateCollections(a, ['customers']);
   const pending = getKnownDocument(a, 'customers', 'late'); await Promise.resolve(); invalidateCollections(a, ['customers']);
-  resolve({ exists: () => true, id: 'late', data: () => ({ name: 'Old' }) }); await pending;
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'data-access/invalidated' });
+  resolve({ exists: () => true, id: 'late', data: () => ({ name: 'Old' }) }); await rejected;
   await getKnownDocument(a, 'customers', 'late'); expect(getDoc).toHaveBeenCalledTimes(6);
 });
 test('aggregate descriptors use server aggregates without page limits', async () => {
@@ -102,4 +103,51 @@ test('readiness invalidation forces verification even when a page itself is cach
   invalidateCollections(db, ['appSettings']);
   getDoc.mockResolvedValue({ exists: () => true, id: 'dataAccessV2', data: () => ({ version: 2, readyCollections: [] }) });
   await expect(fetchPage(db, 'customers', { search: 'pa' })).rejects.toMatchObject({ code: 'data-access/not-ready' });
+});
+
+test('unrelated sales invalidation leaves a customer search waiting on readiness valid', async () => {
+  const db = {}; let resolveReady;
+  getDoc.mockImplementationOnce(() => new Promise(resolve => { resolveReady = resolve; }));
+  const pending = fetchPage(db, 'customers', { search: 'pa' });
+  await Promise.resolve();
+  invalidateCollections(db, ['sales']);
+  resolveReady({ exists: () => true, id: 'dataAccessV2', data: () => ({ version: 2, readyCollections: ['customers'] }) });
+  await expect(pending).resolves.toMatchObject({ rows: [{ id: '1', name: 'Ali' }] });
+  expect(getDocs).toHaveBeenCalledTimes(1);
+});
+
+test('customer invalidation rejects its pending readiness search and a new request succeeds', async () => {
+  const db = {}; let resolveReady;
+  getDoc.mockImplementationOnce(() => new Promise(resolve => { resolveReady = resolve; }));
+  const pending = fetchPage(db, 'customers', { search: 'pa' });
+  await Promise.resolve();
+  invalidateCollections(db, ['customers']);
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'data-access/invalidated' });
+  resolveReady({ exists: () => true, id: 'dataAccessV2', data: () => ({ version: 2, readyCollections: ['customers'] }) });
+  await rejected;
+  expect(getDocs).not.toHaveBeenCalled();
+  await expect(fetchPage(db, 'customers', { search: 'pa' })).resolves.toMatchObject({ rows: [{ id: '1', name: 'Ali' }] });
+});
+
+test('unrelated invalidation permits an already pending customer document to populate its cache', async () => {
+  const db = {}; let resolveDocument;
+  getDoc.mockImplementationOnce(() => new Promise(resolve => { resolveDocument = resolve; }));
+  const pending = getKnownDocument(db, 'customers', 'pending');
+  await Promise.resolve(); invalidateCollections(db, ['sales']);
+  resolveDocument({ exists: () => true, id: 'pending', data: () => ({ name: 'Current Customer' }) });
+  await expect(pending).resolves.toMatchObject({ name: 'Current Customer' });
+  await expect(getKnownDocument(db, 'customers', 'pending')).resolves.toMatchObject({ name: 'Current Customer' });
+  expect(getDoc).toHaveBeenCalledTimes(1);
+});
+
+test('affected invalidation rejects an already pending page and prevents its cache reinsertion', async () => {
+  const db = {}; let resolvePage;
+  getDocs.mockImplementationOnce(() => new Promise(resolve => { resolvePage = resolve; }));
+  const pending = fetchPage(db, 'customers', { includeTotal: false });
+  await Promise.resolve(); invalidateCollections(db, ['customers']);
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'data-access/invalidated' });
+  resolvePage(snap([['old', { name: 'Old Customer' }]]));
+  await rejected;
+  await expect(fetchPage(db, 'customers', { includeTotal: false })).resolves.toMatchObject({ rows: [{ id: '1', name: 'Ali' }] });
+  expect(getDocs).toHaveBeenCalledTimes(2);
 });
