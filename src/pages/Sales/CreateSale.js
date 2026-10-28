@@ -1,20 +1,13 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Box, Typography, Button, Card, CardContent, Grid, TextField,
-  MenuItem, Select, FormControl, InputLabel, Divider, Chip,
-  FormControlLabel, Checkbox, Radio, RadioGroup, Alert, Autocomplete,
-  CircularProgress, Paper, IconButton, Stack, InputAdornment, Dialog,
-  DialogTitle, DialogContent, DialogActions
-} from '@mui/material';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { addRecord as addDoc, updateRecord as updateDoc } from '../../data/writes';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, Divider, Chip, FormControlLabel, Checkbox, Radio, RadioGroup, Alert, CircularProgress, Paper, IconButton, Stack, InputAdornment, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import {
   ArrowBack, Save, Delete, AddCircle, PersonAdd,
   SwapHoriz, Receipt, ReceiptLong, LocalShipping, Schedule,
   CheckCircle, ViewList,
 } from '@mui/icons-material';
-import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp, deleteField, getDoc, where, getCountFromServer,
-} from 'firebase/firestore';
+import { collection, doc, serverTimestamp, deleteField, getCountFromServer } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -29,7 +22,6 @@ import {
   applyNewSaleInventory,
 } from '../../utils/inventoryUtils';
 import { normalizeCustomer, normalizeProduct } from '../../utils/normalizeDoc';
-import { getOrFetch } from '../../utils/lookupCache';
 import { getInventoryForProducts, invalidateInventoryCache } from '../../utils/inventoryCache';
 import FirestoreAutocomplete, { invalidateSearchCache } from '../../components/FirestoreAutocomplete';
 
@@ -272,14 +264,11 @@ const CreateSale = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // customers/products kept for commented-out Autocomplete references below
-  const [customers, setCustomers] = useState([]);
-  const [products, setProducts] = useState([]);
   // FIX: inventory is no longer bulk-loaded. It's populated incrementally —
   // per product, as products are searched or selected (see handleProductOptionsChange
   // and the product FirestoreAutocomplete's onChange below).
   const [inventory, setInventory] = useState({});
-  const [employees, setEmployees] = useState([]);
+  const [selectedSalesperson, setSelectedSalesperson] = useState(() => userProfile?.name ? { id: user.uid, name: userProfile.name } : null);
 
   const [invoiceType, setInvoiceType] = useState('gst');
   const [companyId, setCompanyId] = useState('');
@@ -315,26 +304,10 @@ const CreateSale = () => {
 
   useEffect(() => {
     if (!db) return;
-    loadLookups();
     if (id) loadExistingSale();
     else dataLoadedRef.current = true;
-  }, [db]);
-
-  // FIX: inventory is no longer fetched here at all. Stock is fetched
-  // on-demand per product — either for whatever products show up in a
-  // search dropdown (handleProductOptionsChange below) or, in edit mode,
-  // for just the products already on the sale (loadExistingSale below).
-  // This keeps reads flat as your inventory collection grows, instead of
-  // scaling with total product count every time this form opens.
-  // Employees (~20 docs) are cached via lookupCache — first open of the
-  // session fetches from Firestore, subsequent opens within 5 min are free.
-  const loadLookups = async () => {
-    const empData = await getOrFetch('employees', () =>
-      getDocs(query(collection(db, 'users'), orderBy('name')))
-        .then(s => s.docs.map(d => ({ id: d.id, ...d.data() })))
-    );
-    setEmployees(empData);
-  };
+    // eslint-disable-next-line
+  }, [db, id]);
 
   const loadExistingSale = async () => {
     setLoading(true);
@@ -346,6 +319,7 @@ const CreateSale = () => {
       setCompanyId(d.companyId || '');
       setSelectedCustomer(d.customerId ? { id: d.customerId, name: d.customerName, phone: d.customerPhone } : null);
       setSalesperson(d.salesperson || '');
+      setSelectedSalesperson(d.salesperson ? { id: d.salespersonId || '__saved__', name: d.salesperson } : null);
       setSaleDate(d.saleDate || '');
       // FIX: reconstruct productObj from saved item fields so FirestoreAutocomplete
       // can display the product name in edit mode without loading all products.
@@ -363,7 +337,7 @@ const CreateSale = () => {
       if (idsInSale.length > 0) {
         getInventoryForProducts(db, idsInSale).then(stockMap => {
           setInventory(prev => ({ ...prev, ...stockMap }));
-        });
+        }).catch(e => setError(e.message));
       }
 
       setNotes(d.notes || '');
@@ -382,6 +356,8 @@ const CreateSale = () => {
       setDeliveryType(d.deliveryType || DELIVERY_TYPES.IMMEDIATE);
       setDeliveryDate(d.deliveryDate || '');
       setBulkPrice(d.bulkPrice || 0);
+    } catch (e) {
+      setError(e.message);
     } finally {
       setLoading(false);
       setTimeout(() => { dataLoadedRef.current = true; }, 100);
@@ -408,7 +384,7 @@ const CreateSale = () => {
     if (ids.length === 0) return;
     getInventoryForProducts(db, ids).then(stockMap => {
       setInventory(prev => ({ ...prev, ...stockMap }));
-    });
+    }).catch(e => setError(e.message));
   }, [db]);
 
   // FIX: supports two call signatures:
@@ -429,22 +405,6 @@ const CreateSale = () => {
       }
 
       arr[idx] = { ...arr[idx], [k]: val };
-      if (k === 'productId') {
-        // Dead code path — products[] is always [] since we switched to FirestoreAutocomplete.
-        // Kept for backward compatibility in case setItemField('productId') is called elsewhere.
-        const prod = products.find(p => p.id === val);
-        if (prod) {
-          arr[idx].productName = prod.name;
-          arr[idx].price = prod.price;
-          arr[idx].gstRate = prod.gstRate || 18;
-          arr[idx].unit = prod.unit || 'pcs';
-          arr[idx].description = prod.description || '';
-          arr[idx].hsnCode = prod.hsnCode || '';
-          const stock = inventory[val] || 0;
-          if (stock <= 0) toast.warning(`⚠️ ${prod.name} is OUT OF STOCK!`);
-          else if (stock < arr[idx].qty) toast.warning(`⚠️ Only ${stock} units of ${prod.name} in stock`);
-        }
-      }
       if (k === 'qty' && arr[idx].productId) {
         const stock = inventory[arr[idx].productId] || 0;
         if (val > stock) toast.warning(`Only ${stock} in stock for ${arr[idx].productName}`);
@@ -505,10 +465,9 @@ const CreateSale = () => {
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
     const newCust = { id: ref.id, ...form };
-    setCustomers(p => [...p, newCust]);
     setSelectedCustomer(newCust);
     // Flush search cache so new customer appears in next FirestoreAutocomplete query
-    invalidateSearchCache('customers');
+    invalidateSearchCache('customers', db);
     toast.success('Customer added');
   };
 
@@ -522,8 +481,7 @@ const CreateSale = () => {
 
     // Keep the same cache/search architecture as the Products page and the
     // existing customer quick-add flow. No full product reload is performed.
-    setProducts(p => [...p, newProduct]);
-    invalidateSearchCache('products');
+    invalidateSearchCache('products', db);
     setInventory(prev => ({ ...prev, [ref.id]: 0 }));
 
     // Select the newly-created product only in the sale line that requested it.
@@ -552,7 +510,7 @@ const CreateSale = () => {
     customerId: selectedCustomer.id,
     customerName: selectedCustomer.name,
     customerPhone: selectedCustomer.phone,
-    salesperson, saleDate,
+    salesperson, salespersonId: selectedSalesperson?.id === '__saved__' ? null : selectedSalesperson?.id || null, saleDate,
     items: itemsWithCalc.map(it => ({
       productId: it.productId, productName: it.productName,
       qty: parseFloat(it.qty), price: parseFloat(it.price),
@@ -606,7 +564,7 @@ const CreateSale = () => {
       const productIdsInSale = itemsWithCalc.map(it => it.productId).filter(Boolean);
 
       if (isEdit) {
-        const existingSnap = await getDoc(doc(db, 'sales', id));
+        const existingSnap = await getDoc(doc(db, 'sales', id), { ttlMs: 0 });
         const existingData = existingSnap.data();
         invoiceNumber = existingData.invoiceNumber;
         const prevPaymentType = existingData.paymentType;
@@ -822,12 +780,9 @@ const CreateSale = () => {
                 onChange={e => setSaleDate(e.target.value)} size="small" InputLabelProps={{ shrink: true }} />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth size="small">
-                <InputLabel>Salesperson</InputLabel>
-                <Select value={salesperson} onChange={e => setSalesperson(e.target.value)} label="Salesperson">
-                  {employees.map(e => <MenuItem key={e.id} value={e.name}>{e.name}</MenuItem>)}
-                </Select>
-              </FormControl>
+              <FirestoreAutocomplete db={db} collectionName="users" label="Salesperson"
+                value={selectedSalesperson}
+                onChange={(_, employee) => { setSelectedSalesperson(employee); setSalesperson(employee?.name || ''); }} />
             </Grid>
           </Grid>
         </CardContent>
@@ -842,14 +797,7 @@ const CreateSale = () => {
               New Customer
             </Button>
           </Box>
-          {/* <Autocomplete
-            options={customers}
-            getOptionLabel={c => `${c.name} — ${c.phone}`}
-            value={selectedCustomer}
-            onChange={(_, v) => setSelectedCustomer(v)}
-            renderInput={params => <TextField {...params} label="Select Customer *" size="small" />}
-            isOptionEqualToValue={(o, v) => o.id === v.id}
-          /> */}
+
           <FirestoreAutocomplete
             db={db}
             collectionName="customers"
@@ -929,28 +877,7 @@ const CreateSale = () => {
                         New Product
                       </Button>
                     </Box>
-                    {/* <Autocomplete
-                      fullWidth
-                      size="small"
-                      options={products}
-                      getOptionLabel={p => p.name || ''}
-                      value={products.find(p => p.id === item.productId) || null}
-                      onChange={(_, v) => setItemField(idx, 'productId')(v?.id || '')}
-                      isOptionEqualToValue={(o, v) => o.id === v.id}
-                      renderOption={(props, p) => (
-                        <Box component="li" {...props} key={p.id}>
-                          <Box>
-                            <Typography variant="body2">{p.name}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {formatCurrency(p.price)} · Stock: {inventory[p.id] || 0}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      )}
-                      renderInput={params => (
-                        <TextField {...params} label="Product *" size="small" />
-                      )}
-                    /> */}
+
                     <FirestoreAutocomplete
                       db={db}
                       collectionName="products"
@@ -981,7 +908,7 @@ const CreateSale = () => {
                             const stock = stockMap[v.id] || 0;
                             if (stock <= 0) toast.warning(`⚠️ ${v.name} is OUT OF STOCK!`);
                             else if (stock < currentQty) toast.warning(`⚠️ Only ${stock} units of ${v.name} in stock`);
-                          });
+                          }).catch(e => setError(e.message));
                         }
                       }}
                       label="Product *"

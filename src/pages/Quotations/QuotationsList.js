@@ -1,5 +1,8 @@
-// src/pages/Quotations/QuotationsList.js
-import React, { useState, useEffect, useRef } from 'react';
+import { deleteRecord as deleteDoc } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { businessListOptions } from '../../utils/businessListQueries';
+import { useState } from 'react';
 import {
   Box, Typography, Button, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination, Chip,
@@ -7,10 +10,7 @@ import {
   DialogActions, MenuItem, Select, FormControl, InputLabel, Stack,
 } from '@mui/material';
 import { Add, Edit, Delete, FilterList, Description } from '@mui/icons-material';
-import {
-  collection, query, orderBy, limit, startAfter, getDocs,
-  deleteDoc, doc, getCountFromServer, where, Timestamp,
-} from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -19,17 +19,9 @@ import { COMPANIES } from '../../constants';
 import { useMediaQuery, useTheme } from '@mui/material';
 import MonthSearchBar from '../../components/MonthSearchBar';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 /** Returns { start: Date, end: Date } spanning the full calendar month. */
-const getMonthBounds = (yearMonth) => {
-  const [y, m] = yearMonth.split('-').map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  return {
-    start: new Date(y, m - 1, 1, 0, 0, 0, 0),
-    end:   new Date(y, m - 1, lastDay, 23, 59, 59, 999),
-  };
-};
 
 const QuotationsList = () => {
   const { db }   = useAuth();
@@ -37,124 +29,26 @@ const QuotationsList = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows,    setRows]    = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total,   setTotal]   = useState(0);
-  const [page,    setPage]    = useState(0);
-
   // Month-scoped search
   const [searchMonth,     setSearchMonth]     = useState('');
   const [search,          setSearch]          = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchTimer = useRef(null);
 
   // Filters
   const [invoiceFilter, setInvoiceFilter] = useState('all');
   const [companyFilter, setCompanyFilter] = useState('all');
   const [showFilters,   setShowFilters]   = useState(false);
 
-  const [cursorMap,   setCursorMap]   = useState({});
   const [deleteId,    setDeleteId]    = useState(null);
-  const [refreshKey,  setRefreshKey]  = useState(0);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleSearch = val => {
-    setSearch(val);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { setDebouncedSearch(val); setPage(0); }, 400);
-  };
+  const handleSearch = setSearch;
 
-  const handleMonthChange = val => {
-    setSearchMonth(val);
-    setSearch('');
-    setDebouncedSearch('');
-    setPage(0);
-    setCursorMap({});
-  };
-
-  // Reset page when dropdown filters change
-  useEffect(() => { setPage(0); setCursorMap({}); }, [invoiceFilter, companyFilter]);
+  const handleMonthChange = setSearchMonth;
 
   // ── Data loading ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-
-    const run = async () => {
-      setLoading(true);
-      try {
-
-        // ── MONTH SEARCH MODE ────────────────────────────────────────────
-        // Fetch all quotations created in the selected month (bounded).
-        // Apply dropdown filters + text search in memory.
-        if (searchMonth) {
-          const { start, end } = getMonthBounds(searchMonth);
-          const snap = await getDocs(query(
-            collection(db, 'quotations'),
-            where('createdAt', '>=', Timestamp.fromDate(start)),
-            where('createdAt', '<=', Timestamp.fromDate(end)),
-            orderBy('createdAt', 'desc'),
-            // No limit — bounded by month
-          ));
-          if (!active) return;
-
-          let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-          // Dropdown filters in memory (avoids composite index requirement)
-          if (invoiceFilter !== 'all') all = all.filter(r => r.invoiceType === invoiceFilter);
-          if (companyFilter !== 'all') all = all.filter(r => r.companyId  === companyFilter);
-
-          // Text search
-          if (debouncedSearch.trim()) {
-            const s = debouncedSearch.toLowerCase();
-            all = all.filter(r =>
-              (r.quoteNumber   || '').toLowerCase().includes(s) ||
-              (r.customerName  || '').toLowerCase().includes(s) ||
-              (r.customerPhone || '').includes(s)
-            );
-          }
-
-          setTotal(all.length);
-          setRows(all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
-          return;
-        }
-
-        // ── NORMAL MODE: server-side cursor pagination ───────────────────
-        const baseConstraints = [orderBy('createdAt', 'desc')];
-        if (invoiceFilter !== 'all') baseConstraints.push(where('invoiceType', '==', invoiceFilter));
-        if (companyFilter !== 'all') baseConstraints.push(where('companyId',   '==', companyFilter));
-
-        // Count (where-only constraints, no orderBy/limit)
-        const countConstraints = [];
-        if (invoiceFilter !== 'all') countConstraints.push(where('invoiceType', '==', invoiceFilter));
-        if (companyFilter !== 'all') countConstraints.push(where('companyId',   '==', companyFilter));
-
-        const paginationConstraints = [...baseConstraints, limit(PAGE_SIZE)];
-        if (page > 0 && cursorMap[page - 1]) paginationConstraints.push(startAfter(cursorMap[page - 1]));
-
-        const [snap, countSnap] = await Promise.all([
-          getDocs(query(collection(db, 'quotations'), ...paginationConstraints)),
-          getCountFromServer(query(collection(db, 'quotations'), ...countConstraints)),
-        ]);
-        if (!active) return;
-
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setTotal(countSnap.data().count);
-        if (snap.docs.length > 0) {
-          setCursorMap(prev => ({ ...prev, [page]: snap.docs[snap.docs.length - 1] }));
-        }
-
-      } catch (e) {
-        if (!active) return;
-        toast.error('Failed to load quotations');
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    run();
-    return () => { active = false; };
-  }, [db, page, invoiceFilter, companyFilter, searchMonth, debouncedSearch, refreshKey]);
+  const { rows, loading, error, total, page, setPage, refresh } = usePagedCollection(
+    db, 'quotations', businessListOptions('quotations', { search, month: searchMonth, invoiceFilter, companyFilter })
+  );
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
@@ -163,9 +57,9 @@ const QuotationsList = () => {
       await deleteDoc(doc(db, 'quotations', deleteId));
       toast.success('Quotation deleted');
       setDeleteId(null);
-      setCursorMap({});
+
       setPage(0);
-      setRefreshKey(k => k + 1);
+      refresh();
     } catch (e) {
       toast.error('Delete failed');
     }
@@ -227,6 +121,7 @@ const QuotationsList = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
+      <QueryStatus error={error} loading={loading} search={search} />
 
       {/* ── Header ── */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={1}>
@@ -317,8 +212,8 @@ const QuotationsList = () => {
                 <Box textAlign="center" py={6}>
                   <Description sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                   <Typography color="text.secondary">
-                    {searchMonth && debouncedSearch
-                      ? `No quotations matching "${debouncedSearch}"`
+                    {searchMonth && search
+                      ? `No quotations matching "${search}"`
                       : searchMonth ? 'No quotations in this month'
                       : 'No quotations found'}
                   </Typography>
@@ -327,7 +222,7 @@ const QuotationsList = () => {
               : rows.map(row => <MobileCard key={row.id} row={row} />)
           }
           {rows.length > 0 && (
-            <TablePagination component="div" count={total} page={page} rowsPerPage={PAGE_SIZE}
+            <TablePagination component="div" count={total ?? 0} page={page} rowsPerPage={PAGE_SIZE}
               onPageChange={(_, p) => setPage(p)} rowsPerPageOptions={[PAGE_SIZE]} />
           )}
         </Box>
@@ -365,8 +260,8 @@ const QuotationsList = () => {
                       <TableRow>
                         <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                           <Typography color="text.secondary">
-                            {searchMonth && debouncedSearch
-                              ? `No quotations matching "${debouncedSearch}"`
+                            {searchMonth && search
+                              ? `No quotations matching "${search}"`
                               : searchMonth ? 'No quotations in this month'
                               : 'No quotations found'}
                           </Typography>
@@ -426,7 +321,7 @@ const QuotationsList = () => {
             </Table>
           </TableContainer>
           <TablePagination
-            component="div" count={total} page={page}
+            component="div" count={total ?? 0} page={page}
             onPageChange={(_, p) => setPage(p)}
             rowsPerPage={PAGE_SIZE} rowsPerPageOptions={[PAGE_SIZE]}
           />

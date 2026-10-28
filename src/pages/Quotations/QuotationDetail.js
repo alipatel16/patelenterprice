@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, Chip, Divider,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   IconButton, Alert, CircularProgress, Stack,
 } from '@mui/material';
 import { ArrowBack, Edit, Print } from '@mui/icons-material';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';

@@ -1,3 +1,5 @@
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { updateRecord as updateDoc } from '../../data/writes';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, Chip, Divider,
@@ -5,12 +7,8 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, MenuItem,
   Select, FormControl, InputLabel, Tab, Tabs,
 } from '@mui/material';
-import {
-  ArrowBack, Edit, BugReport, AccountTree, Warning,
-  ArrowUpward, Person, Business, CheckCircle, History,
-  Phone, Assignment, Share,
-} from '@mui/icons-material';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { ArrowBack, Edit, Warning, ArrowUpward, Person, Business, CheckCircle, Assignment, Share } from '@mui/icons-material';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';

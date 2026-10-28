@@ -1,4 +1,6 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
+import { updateRecord as updateDoc } from '../../data/writes';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -10,7 +12,7 @@ import {
   ArrowBack, Edit, Print, CardGiftcard, CheckCircle,
   HourglassEmpty, LocalShipping, Undo,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';

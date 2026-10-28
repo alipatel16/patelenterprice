@@ -1,0 +1,26 @@
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Simulate } from 'react-dom/test-utils';
+import GiftSetList from './GiftSetList';
+import BrandHierarchyList from '../Complaints/BrandHierarchyList';
+import { fetchPage } from '../../data/query';
+jest.mock('../../contexts/AuthContext', () => { const db = {}; return { useAuth: () => ({ db }) }; });
+jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }));
+jest.mock('../../data/writes', () => ({ deleteRecord: jest.fn(), setRecord: jest.fn() }));
+jest.mock('../../data/query', () => ({ fetchPage: jest.fn(), subscribeInvalidation: () => () => {}, invalidateCollections: jest.fn(), queryKey: value => JSON.stringify(value) }));
+test.each([[GiftSetList, 'giftSets', 'Historic gift'], [BrandHierarchyList, 'brandHierarchies', 'Historic brand']])('indexed search on a list reaches beyond its browse page and uses only one debounce', async (Component, collectionName, name) => {
+  global.IS_REACT_ACT_ENVIRONMENT = true; jest.useFakeTimers(); jest.clearAllMocks();
+  fetchPage.mockImplementation(async (_, collection, opts) => ({ rows: opts.search ? [{ id: '399', name, brandName: name }] : [{ id: '1', name: 'Recent record', brandName: 'Recent record' }], total: opts.search ? 1 : 400, lastDoc: { id: 'cursor' }, hasNext: false }));
+  const host = document.createElement('div'), root = createRoot(host);
+  await act(async () => root.render(<Component />));
+  expect(host.textContent).toContain('Recent record');
+  const input = host.querySelector('input');
+  await act(async () => Simulate.change(input, { target: { value: 'h' } }));
+  await act(async () => jest.advanceTimersByTime(400));
+  expect(fetchPage).toHaveBeenCalledTimes(1); expect(host.textContent).not.toContain('Recent record');
+  await act(async () => Simulate.change(input, { target: { value: 'hi' } }));
+  await act(async () => jest.advanceTimersByTime(299)); expect(fetchPage).toHaveBeenCalledTimes(1);
+  await act(async () => jest.advanceTimersByTime(1)); expect(host.textContent).toContain(name);
+  expect(fetchPage.mock.calls.at(-1)).toEqual([expect.anything(), collectionName, expect.objectContaining({ search: 'hi', pageSize: 15, cursor: null })]);
+  act(() => root.unmount()); jest.useRealTimers();
+});
