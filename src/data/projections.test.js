@@ -57,3 +57,25 @@ it.each([0, false, '   '])('flags nonempty malformed complaint dates (%p) withou
   expect(deriveComplaintState({ expectedResolutionDate })).toEqual({ complaintDueDate: '9999-12-31',
     complaintDateIssues: ['invalid-expected-resolution-date'] });
 });
+
+it.each([
+  [{ salespersonId: 'u1', salesperson: 'Same Name' }, 'user:u1'],
+  [{ salesperson: '  ALI   Patel ' }, 'legacy:ali patel'],
+  [{ salesperson: '' }, 'legacy:unmatched'],
+])('shares the exact source reporting identity with employee report contributions (%p)', (identity, expected) => {
+  const source = { ...sale, ...identity };
+  expect(deriveSaleState(source).reportEmployeeKey).toBe(expected);
+  expect(buildReportContributions('s', source).filter(row => row.collection === 'reportEmployeePeriods')
+    .every(row => row.data.dimensionKey === expected && row.data.employeeKey === expected)).toBe(true);
+});
+
+it('projects EMI badge metadata without duplicating receipt or reschedule histories', () => {
+  const installment = { ...sale.emiInstallments[1], dueDateChangeCount: 3,
+    payments: [{ amount: 50 }], dueDateChanges: [{ from: '2026-10-05', to: '2026-11-05' }] };
+  const row = buildEmiDueDocuments('s', { ...sale, emiMonths: 12,
+    emiInstallments: [sale.emiInstallments[0], installment] })[0].data;
+  expect(row).toMatchObject({ emiMonths: 12, dueDateChangeCount: 3, remainingAmount: 350 });
+  expect(row).not.toHaveProperty('payments');
+  expect(row).not.toHaveProperty('dueDateChanges');
+  expect(buildEmiDueDocuments('s', sale)[0].data).toMatchObject({ emiMonths: 2, dueDateChangeCount: 0 });
+});

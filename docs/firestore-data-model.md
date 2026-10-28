@@ -25,10 +25,13 @@ The returned `data` on an idempotent replay is the current source, while `revisi
 is the revision at which that operation originally applied.
 
 Source writes recompute `searchTokens`, `searchVersion: 2`, `nameLower`, optional
-`makerLower`, `_writeRevision` (monotonically increasing), and `_projectionVersion: 2`.
+`makerLower`, `_writeRevision` (monotonically increasing), `_projectionVersion: 2`,
+and `_deleteMarkerId` (the exact `encodeURIComponent(documentRef.path)` marker ID).
 Firebase `deleteField()` is materialized before projection; `serverTimestamp()` is
 accepted outside arrays. Arithmetic/array transforms must use a mutator. Nested
-set merges and string `mergeFields` are supported; Firestore FieldPath overloads and
+set merges and string `mergeFields` are supported. In a merge, an explicitly empty
+nested map replaces that map's children; an empty document-level payload preserves
+the existing document. Firestore FieldPath overloads and
 field/value varargs are outside this interface.
 
 All transaction reads precede all writes. Successful commits invalidate every changed
@@ -50,6 +53,7 @@ use deterministic IDs and can be replaced/deleted without additive subtraction.
 
 | Field | Format/meaning |
 | --- | --- |
+| `reportEmployeeKey` | Exact employee report dimension identity: `user:ID`, `legacy:NORMALIZED_NAME`, or `legacy:unmatched` |
 | `hasPendingEmi` | Boolean; unpaid/unknown installments or missing EMI schedule |
 | `emiOutstandingAmount` | Sum of schedule remaining amounts, `null` when unknowable; zero for non-EMI |
 | `emiRemainingInstallmentCount` | Number of unpaid/unknown schedule rows |
@@ -84,11 +88,15 @@ Collection is `emiDues`; ID is `projectionId(saleId, installmentNumber)`, joinin
 URI-encoded parts with `_`. It contains unpaid/unknown installments only.
 
 Each `data` has `schemaVersion: 2`, `sourceRevision`, `saleId`, `installmentNumber`,
+`emiMonths` (source value if present, otherwise schedule length),
+`dueDateChangeCount` (installment value if present, otherwise zero),
 `amount`, `paidAmount`, `remainingAmount`, `dueDate`, `saleDate`, `invoiceNumber`,
 `companyId`, `companyName`, `customerId`, `customerName`, `customerPhone`, shared
 search fields, and the four reconciliation/warning fields from sale state.
 Unknown amounts/dates are `null`; valid dates are strict `YYYY-MM-DD`.
 No receipt history is duplicated here: load the known source sale for payments.
+Reschedule history is also retained only on the source; the queue copies badge
+metadata without duplicating either history array.
 Use `needsReconciliation == true` to expose malformed dates/amounts separately
 from date-bounded queues. A missing schedule has source reconciliation state but
 cannot create fictional installment rows.
@@ -119,6 +127,12 @@ reconciliation count. Consumers must display reconciliation counts with totals.
 
 Contributions are reversed/added on edits, reassignment, date moves and deletion.
 Rows with every metric zero are deleted; negative metrics reject the transaction.
+Additions/edits may update dimension display metadata and search tokens; subtraction
+alone preserves the existing summary metadata/tokens rather than restoring labels
+from the removed invoice. Source sales maintain `reportEmployeeKey` from the same
+identity derivation as employee summaries. Invoice drilldowns filter this exact
+field for both explicit users and complete legacy/unmatched buckets; it is query
+support only and does not resolve a legacy name to a user.
 Payment-only edits read/write no report summaries when contribution values,
 including warning counts, stay unchanged. `reportState/version` contains
 `{schemaVersion: 2, revision}` and increments once whenever report contributions
@@ -151,6 +165,14 @@ values add `invalid-expected-resolution-date`. Source dates are preserved.
 `_deletionOps/{encodeURIComponent(sourcePath)}` stores `schemaVersion: 2`,
 `sourcePath`, `previousRevision`, `revision`, `operationId` (or `null`). A recreated
 source advances beyond the retained deletion revision. Markers are not deleted.
+Every nondeleted source written by these adapters carries `_deleteMarkerId`, even
+when its source ID contains non-ASCII characters, spaces, or literal percent signs.
+The adapter always recomputes it and ignores caller overrides/deletion of this field.
+For `customers/café ₹%` it is `customers%2Fcaf%C3%A9%20%E2%82%B9%25`.
+Rules can read `_deletionOps/$(resource.data._deleteMarkerId)` with `getAfter`
+to require a compatible atomic delete marker without reimplementing URI/UTF-8
+encoding. Migration must populate this additive source field before enabling that
+guard for legacy records. The marker ID equals the adapter's actual deletion path.
 `_writeOps/{encodeURIComponent(JSON.stringify([sourcePath, operationId]))}` stores
 `schemaVersion: 2`, `sourcePath`, `operationId`, `revision`, `kind` (`update` or
 `delete`) to prevent replay. Do not expire these while a caller may replay an ID.

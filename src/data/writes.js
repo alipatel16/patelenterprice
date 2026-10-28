@@ -27,6 +27,9 @@ function materialize(value, current, merge = false, inArray = false) {
   if (value === undefined) fail('Undefined source fields are not supported', 'data-access/invalid-payload');
   if (Array.isArray(value)) return value.map(entry => materialize(entry, undefined, false, true));
   if (!plain(value)) return value;
+  // Firestore includes an explicit empty map in a merge's field mask, replacing
+  // that map rather than retaining its old descendants.
+  if (!Object.keys(value).length) return {};
   const result = merge && plain(current) ? copy(current) : {};
   for (const [key, entry] of Object.entries(value)) {
     if (['__proto__', 'constructor', 'prototype'].includes(key)) fail('Unsupported field name', 'data-access/invalid-payload');
@@ -60,6 +63,8 @@ function effectiveSource(current, payload, mode, options = {}) {
     }
     return result;
   }
+  // An empty document-level merge has no field mask and preserves the document.
+  if (options.merge === true && !Object.keys(payload).length) return copy(current || {});
   return materialize(payload, current, options.merge === true);
 }
 function diffRows(before, after) {
@@ -73,7 +78,9 @@ function diffRows(before, after) {
 }
 function additiveSummary(existing, change, metrics) {
   if (change.before && !existing) fail(`Missing projected summary ${change.collection}/${change.id}`);
-  const next = { ...(existing || {}), ...(change.after || change.before), schemaVersion: PROJECTION_VERSION,
+  // A removed contribution owns only its metric subtraction. Retain the stored
+  // dimension metadata/tokens instead of restoring a deleted invoice's old label.
+  const next = { ...(existing || {}), ...(change.after || {}), schemaVersion: PROJECTION_VERSION,
     _writeRevision: (existing?._writeRevision || 0) + 1 };
   for (const metric of metrics) {
     const prior = existing?.[metric] ?? 0;
@@ -154,7 +161,8 @@ export function createWriteAdapters(driver = { doc, runTransaction }) {
       if (next) {
         if (collection === 'sales') next = { ...next, ...deriveSaleState(next) };
         if (collection === 'complaints') next = { ...next, ...deriveComplaintState(next) };
-        next = withSearchFields(collection, { ...next, _writeRevision: revision, _projectionVersion: PROJECTION_VERSION });
+        next = withSearchFields(collection, { ...next, _writeRevision: revision, _projectionVersion: PROJECTION_VERSION,
+          _deleteMarkerId: deletionRef.id });
       }
       const projectedPrevious = previous?._projectionVersion === PROJECTION_VERSION ? previous : null;
       const reportChanges = collection === 'sales' ? diffRows(buildReportContributions(id, projectedPrevious), buildReportContributions(id, next)) : [];

@@ -205,3 +205,63 @@ it('cancels floating point quantity residue when deleting invoices in a differen
   await writes.deleteRecord(other);
   expect([...store.records.keys()].some(key => /^report(Product|Employee)Periods\//.test(key))).toBe(false);
 });
+
+it('clears children of explicit empty nested maps during merge without removing unrelated fields', async () => {
+  const { store, writes, ref } = setup();
+  await writes.setRecord(ref, { ...fixture, nested: { clear: { old: 1 }, keep: { value: 2 } }, notes: 'retained' });
+  await writes.setRecord(ref, { nested: { clear: {} } }, { merge: true });
+  expect(store.records.get(ref.path)).toMatchObject({ nested: { clear: {}, keep: { value: 2 } }, notes: 'retained' });
+  expect(store.records.get(ref.path).nested.clear).toEqual({});
+});
+
+it('retains surviving summary labels and search tokens when subtracting an older invoice', async () => {
+  const { store, writes, ref } = setup(), other = store.reference('sales/s2');
+  await writes.setRecord(ref, { ...fixture, salesperson: 'Earlier Alice',
+    items: [{ ...fixture.items[0], productName: 'Alpha' }] });
+  await writes.setRecord(other, { ...fixture, salesperson: 'Latest Bob',
+    items: [{ ...fixture.items[0], productName: 'Beta' }] });
+  await writes.deleteRecord(ref);
+  const products = [...store.records].filter(([path]) => path.startsWith('reportProductPeriods/')).map(([, row]) => row);
+  expect(products).toHaveLength(3);
+  products.forEach(row => {
+    expect(row).toMatchObject({ productName: 'Beta', invoiceCount: 1, quantity: 2, revenue: 1000 });
+    expect(row.searchTokens).toContain('beta');
+    expect(row.searchTokens).not.toContain('alpha');
+  });
+  const employees = [...store.records].filter(([path]) => path.startsWith('reportEmployeePeriods/')).map(([, row]) => row);
+  employees.forEach(row => {
+    expect(row).toMatchObject({ employeeName: 'Latest Bob', invoiceCount: 1 });
+    expect(row.searchTokens).toContain('bob');
+    expect(row.searchTokens).not.toContain('alice');
+  });
+});
+
+it('stores the exact portable deletion marker ID on non-ASCII sources and maintains it through edits', async () => {
+  const { store, writes } = setup(), ref = store.reference('customers/café ₹%');
+  const markerId = 'customers%2Fcaf%C3%A9%20%E2%82%B9%25';
+  await writes.setRecord(ref, { name: 'Customer', _deleteMarkerId: 'untrusted' });
+  expect(store.records.get(ref.path)._deleteMarkerId).toBe(markerId);
+  await writes.updateRecord(ref, { name: 'Updated', _deleteMarkerId: deleteField() });
+  expect(store.records.get(ref.path)._deleteMarkerId).toBe(markerId);
+  await writes.deleteRecord(ref);
+  expect(store.records.get(`_deletionOps/${markerId}`)).toMatchObject({ sourcePath: 'customers/café ₹%', revision: 3, previousRevision: 2 });
+  const created = await writes.addRecord({ firestore: store.db, path: 'customers' }, { name: 'New customer' });
+  expect(store.records.get(created.path)._deleteMarkerId).toBe('customers%2Fauto1');
+});
+
+it('preserves source fields on an empty document-level merge', async () => {
+  const { store, writes, ref } = setup();
+  await writes.setRecord(ref, { ...fixture, nested: { a: 1 } });
+  await writes.setRecord(ref, {}, { merge: true });
+  expect(store.records.get(ref.path)).toMatchObject({ grandTotal: 1000, nested: { a: 1 } });
+});
+
+it('recomputes the source employee report key when salesperson identity changes', async () => {
+  const { store, writes, ref } = setup();
+  await writes.setRecord(ref, { ...fixture, reportEmployeeKey: 'legacy:wrong' });
+  expect(store.records.get(ref.path).reportEmployeeKey).toBe('user:u1');
+  await writes.updateRecord(ref, { salespersonId: deleteField(), salesperson: '  ALI   PATEL ' });
+  expect(store.records.get(ref.path).reportEmployeeKey).toBe('legacy:ali patel');
+  await writes.updateRecord(ref, { salesperson: '' });
+  expect(store.records.get(ref.path).reportEmployeeKey).toBe('legacy:unmatched');
+});

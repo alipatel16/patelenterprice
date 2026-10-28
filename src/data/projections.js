@@ -16,6 +16,8 @@ export function validDate(value) {
 export const projectionId = (...parts) => parts.map(part => encodeURIComponent(String(part))).join('_');
 const money = value => { const result = numeric(value); return result === null ? null : roundMoney(result); };
 const sum = values => roundMoney(values.reduce((total, value) => total + value, 0));
+const employeeReportingKey = sale => sale.salespersonId ? `user:${sale.salespersonId}`
+  : `legacy:${normalizeSearch(sale.salesperson) || 'unmatched'}`;
 
 function analyzeSale(sale) {
   const issues = [], financialWarnings = [];
@@ -45,7 +47,7 @@ function analyzeSale(sale) {
     if (inst.status === 'paid' && amount !== null && paid !== null && paid < amount) warn(`${prefix}-paid-status-mismatch`);
     const dueDate = validDate(inst.dueDate) ? inst.dueDate : null;
     if (!dueDate) issues.push(`${prefix}-invalid-due-date`);
-    return { installmentNumber: number, dueDate, amount, paidAmount: paid,
+    return { installmentNumber: number, dueDate, amount, paidAmount: paid, dueDateChangeCount: inst.dueDateChangeCount ?? 0,
       remainingAmount: amount === null || paid === null ? null : roundMoney(Math.max(0, amount - paid)) };
   });
   if (isEmi) {
@@ -65,6 +67,7 @@ function analyzeSale(sale) {
   const delivered = sale.isDelivered === true || sale.isDelivered === 'true' ||
     ['delivered', 'completed'].includes(deliveredStatus) || (deliveredStatus !== 'pending' && Boolean(sale.actualDeliveryDate));
   const state = {
+    reportEmployeeKey: employeeReportingKey(sale),
     hasPendingEmi: isEmi && (unpaid.length > 0 || !rows.length),
     emiOutstandingAmount: isEmi ? (rows.length ? emiOutstanding : null) : 0,
     emiRemainingInstallmentCount: unpaid.length,
@@ -90,6 +93,7 @@ export function buildEmiDueDocuments(saleId, sale) {
   const { state, unpaid } = analyzeSale(sale);
   return unpaid.map(row => ({ collection: 'emiDues', id: projectionId(saleId, row.installmentNumber),
     data: withSearchFields('emiDues', { ...row, saleId, schemaVersion: PROJECTION_VERSION,
+      emiMonths: sale.emiMonths ?? sale.emiInstallments.length,
       sourceRevision: sale._writeRevision || 0, invoiceNumber: sale.invoiceNumber || '', companyId: sale.companyId || '',
       companyName: sale.companyName || '', customerId: sale.customerId || '', customerName: sale.customerName || '',
       customerPhone: sale.customerPhone || '', saleDate: validDate(sale.saleDate) ? sale.saleDate : null,
@@ -117,7 +121,7 @@ export function buildReportContributions(saleId, sale) {
     group.invalid = group.invalid || invalid;
     groups.set(key, group);
   }
-  const employeeKey = sale.salespersonId ? `user:${sale.salespersonId}` : `legacy:${normalizeSearch(sale.salesperson) || 'unmatched'}`;
+  const employeeKey = state.reportEmployeeKey;
   const dimensions = [...groups.values()].map(group => ({ collection: 'reportProductPeriods', ...group }));
   dimensions.push({ collection: 'reportEmployeePeriods', dimensionKey: employeeKey, employeeKey,
     employeeId: sale.salespersonId || null, employeeName: sale.salesperson || 'Other / Direct',
