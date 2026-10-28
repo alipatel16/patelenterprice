@@ -29,7 +29,7 @@ function runtimeQueryShapes() {
   }
   for (const collection of ['customers', 'products', 'inventory', 'purchases', 'sales', 'quotations', 'giftInvoices', 'giftSets', 'brandHierarchies']) {
     const variants = choices(collection === 'customers' ? [['typeFilter', 'retail'], ['catFilter', 'a']] : collection === 'sales'
-      ? [['companyFilter', 'c1'], ['invoiceFilter', 'gst'], ['paymentFilter', 'emi'], ['deliveryFilter', 'scheduled']]
+      ? [['invoiceFilter', 'gst'], ['paymentFilter', 'emi'], ['deliveryFilter', 'scheduled']]
       : collection === 'quotations' ? [['companyFilter', 'c1'], ['invoiceFilter', 'gst']] : []);
     const months = ['giftSets', 'brandHierarchies'].includes(collection) ? [''] : ['', '2026-10'];
     for (const selected of variants) for (const month of months) add(collection, businessListOptions(collection, { ...selected, month }));

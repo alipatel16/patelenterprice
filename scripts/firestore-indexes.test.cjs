@@ -32,3 +32,25 @@ test('on-demand selectors use their actual default normalized-name sort', () => 
     assert.ok(generateIndexes().indexes.some(index => index.collectionGroup === collection && index.fields.some(field => field.fieldPath === 'searchTokens') && index.fields.some(field => field.fieldPath === 'nameLower' && field.order === 'ASCENDING')));
   }
 });
+
+test('new sales search indexes reflect the filter arguments actually passed by SalesList', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const parser = require('@babel/parser');
+  const traverse = require('@babel/traverse').default;
+  const source = fs.readFileSync(path.join(__dirname, '../src/pages/Sales/SalesList.js'), 'utf8');
+  const ast = parser.parse(source, { sourceType: 'module', plugins: ['jsx'] });
+  const calls = [];
+  traverse(ast, { CallExpression({ node }) {
+    if (node.callee.type === 'Identifier' && node.callee.name === 'businessListOptions' && node.arguments[0]?.value === 'sales') calls.push(node);
+  } });
+  assert.equal(calls.length, 1);
+  const options = calls[0].arguments[1];
+  assert.equal(options.type, 'ObjectExpression');
+  const filterNames = options.properties.map(property => property.key?.name).filter(name => name?.endsWith('Filter')).sort();
+  assert.deepEqual(filterNames, ['deliveryFilter', 'invoiceFilter', 'paymentFilter']);
+  const baseline = new Set(require('./firestore-existing-indexes.json').map(index => JSON.stringify(index)));
+  const newSearchIndexes = generateIndexes().indexes.filter(index => index.collectionGroup === 'sales' && !baseline.has(JSON.stringify(index)) && index.fields.some(field => field.fieldPath === 'searchTokens'));
+  assert.ok(newSearchIndexes.length > 0);
+  assert.ok(newSearchIndexes.every(index => index.fields.every(field => field.fieldPath !== 'companyId')), 'unused company filter must not create sales search indexes');
+});
