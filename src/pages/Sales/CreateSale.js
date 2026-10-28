@@ -1,5 +1,6 @@
 import { getKnownSnapshot as getDoc } from '../../utils/knownDocument';
 import { addRecord as addDoc, mutateRecord } from '../../data/writes';
+import { buildEmiSchedule, initialSalePaymentState } from '../../data/saleCreation';
 import { saveSaleEdit } from '../../data/saleEdit';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Typography, Button, Card, CardContent, Grid, TextField, MenuItem, Select, FormControl, InputLabel, Divider, Chip, FormControlLabel, Checkbox, Radio, RadioGroup, Alert, CircularProgress, Paper, IconButton, Stack, InputAdornment, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
@@ -445,25 +446,10 @@ const CreateSale = () => {
   const balanceDue = grandTotal - (parseFloat(downPayment) || 0);
   const emiAmount = emiMonths > 0 ? parseFloat((balanceDue / emiMonths).toFixed(2)) : 0;
 
-  const buildEmiInstallments = () => {
-    if (paymentType !== PAYMENT_TYPES.EMI || emiMonths <= 0 || !emiStartDate) return [];
-    const result = [];
-    for (let m = 0; m < emiMonths; m++) {
-      const due = new Date(emiStartDate);
-      due.setMonth(due.getMonth() + m);
-      result.push({
-        installmentNumber: m + 1,
-        dueDate: due.toISOString().split('T')[0],
-        amount: emiAmount,
-        paidAmount: 0,
-        status: 'pending',
-        payments: [],
-        dueDateChanges: [],
-        dueDateChangeCount: 0,
-      });
-    }
-    return result;
-  };
+  const buildEmiInstallments = () => buildEmiSchedule({ paymentType, grandTotal, downPayment, emiMonths, emiStartDate });
+  const initialPayments = () => initialSalePaymentState({ paymentType, grandTotal, downPayment, saleDate, financerName, paymentRef }, {
+    recordedByUid: user?.uid || '', recordedByName: userProfile?.name || user?.email || 'System',
+  });
 
   const handleAddNewCustomer = async form => {
     const ref = await addDoc(collection(db, 'customers'), { ...normalizeCustomer(form), createdAt: serverTimestamp() });
@@ -573,6 +559,7 @@ const CreateSale = () => {
         const prevPaymentType = existingData.paymentType;
 
         let emiInstallments;
+        let scheduleMetadata = {};
         if (paymentType === PAYMENT_TYPES.EMI) {
           const prevInstallments = existingData.emiInstallments || [];
           const configChanged =
@@ -584,6 +571,7 @@ const CreateSale = () => {
             emiInstallments = prevInstallments;
           } else {
             emiInstallments = buildEmiInstallments();
+            scheduleMetadata = { emiScheduleVersion: 2 };
           }
         } else {
           emiInstallments = [];
@@ -591,37 +579,7 @@ const CreateSale = () => {
 
         let paymentReset = {};
         if (prevPaymentType !== paymentType) {
-          const resetInitialPayments = [];
-          let resetInitialPaid = 0;
-          if (
-            (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
-            downPayment > 0
-          ) {
-            resetInitialPayments.push({
-              amount: parseFloat(downPayment),
-              mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
-              payDate: saleDate,
-              notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
-              recordedAt: new Date().toISOString(),
-              isDownPayment: true,
-              recordedByUid: user?.uid || '',
-              recordedByName: userProfile?.name || user?.email || 'System',
-            });
-            resetInitialPaid = parseFloat(downPayment);
-          }
-          const resetStatus =
-            paymentType === PAYMENT_TYPES.FULL
-              ? 'paid'
-              : resetInitialPaid >= grandTotal
-              ? 'paid'
-              : resetInitialPaid > 0
-              ? 'partial'
-              : 'unpaid';
-          paymentReset = {
-            salePayments: resetInitialPayments,
-            totalPaidAmount: resetInitialPaid,
-            paymentStatus: resetStatus,
-          };
+          paymentReset = initialPayments();
         }
 
         const saleData = buildSaleData(invoiceNumber, company);
@@ -652,6 +610,7 @@ const CreateSale = () => {
           ...saleData,
           ...deliveryFieldCleanup,
           emiInstallments,
+          ...scheduleMetadata,
           ...paymentReset,
           updatedAt: serverTimestamp(),
         });
@@ -678,40 +637,10 @@ const CreateSale = () => {
         const saleData = buildSaleData(invoiceNumber, company);
         const emiInstallments = buildEmiInstallments();
 
-        const initialSalePayments = [];
-        let initialTotalPaid = 0;
-        if (
-          (paymentType === PAYMENT_TYPES.FINANCE || paymentType === PAYMENT_TYPES.BANK_TRANSFER) &&
-          downPayment > 0
-        ) {
-          initialSalePayments.push({
-            amount: parseFloat(downPayment),
-            mode: paymentType === PAYMENT_TYPES.FINANCE ? 'Finance' : 'Bank Transfer',
-            payDate: saleDate,
-            notes: `Down payment — ${financerName} (Ref: ${paymentRef})`,
-            recordedAt: new Date().toISOString(),
-            isDownPayment: true,
-            recordedByUid: user?.uid || '',
-            recordedByName: userProfile?.name || user?.email || 'System',
-          });
-          initialTotalPaid = parseFloat(downPayment);
-        }
-
-        const initialPaymentStatus =
-          paymentType === PAYMENT_TYPES.FULL
-            ? 'paid'
-            : initialTotalPaid >= grandTotal
-            ? 'paid'
-            : initialTotalPaid > 0
-            ? 'partial'
-            : 'unpaid';
-
         await addDoc(collection(db, 'sales'), {
           ...saleData,
           emiInstallments,
-          salePayments: initialSalePayments,
-          totalPaidAmount: initialTotalPaid,
-          paymentStatus: initialPaymentStatus,
+          ...initialPayments(),
           createdAt: serverTimestamp(),
         });
 

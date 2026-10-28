@@ -111,3 +111,45 @@ it.each([
 ])('does not guess installment paid amount from invalid history or baseline (%p)', installment => {
   expect(installmentPaid(installment)).toBeNull();
 });
+
+it('accepts legacy installment-only totals and includes the existing down payment once', async () => {
+  const source = { ...emi, totalPaidAmount: 100, emiInstallments: [{ ...emi.emiInstallments[0], paidAmount: 100, payments: [{ amount: 100 }] }] };
+  const { store, actions, seed } = setup(source); await seed();
+  const first = await actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'legacy-down');
+  expect(first.totalPaidAmount).toBe(350);
+  expect(first.emiInstallments[0].payments.map(p => p.amount)).toEqual([100, 50]);
+  const second = await actions.recordEmiPayment(store.db, 's1', 1, receipt(25), 'next');
+  expect(second.totalPaidAmount).toBe(375);
+  expect(second.financialReconciliationRequired).toBe(false);
+  const replay = await actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'legacy-down');
+  expect(replay.totalPaidAmount).toBe(375);
+});
+
+it('refreshes stored reconciliation flags and report contributions without changing historical money', async () => {
+  const source = { ...emi, totalPaidAmount: 0 };
+  const { store, writes, seed } = setup(source); await seed();
+  const ref = store.ref('sales/s1');
+  const legacy = { ...store.records.get(ref.path), financialReconciliationRequired: true, needsReconciliation: true,
+    financialWarnings: ['emi-paid-total-mismatch'], reconciliationIssues: ['emi-paid-total-mismatch'] };
+  store.records.set(ref.path, legacy);
+  for (const [path, row] of store.records) {
+    if (path.startsWith('reportEmployeePeriods/')) store.records.set(path, { ...row, reconciliationCount: 1 });
+    if (path.startsWith('emiDues/')) store.records.set(path, { ...row, financialReconciliationRequired: true, needsReconciliation: true, financialWarnings: legacy.financialWarnings, reconciliationIssues: legacy.reconciliationIssues });
+  }
+  await writes.updateRecord(ref, {});
+  expect(store.records.get(ref.path)).toMatchObject({ totalPaidAmount: 0, downPayment: 200, emiInstallments: source.emiInstallments, financialReconciliationRequired: false });
+  expect(store.records.get('emiDues/s1_1')).toMatchObject({ financialReconciliationRequired: false, needsReconciliation: false });
+  const reports = [...store.records].filter(([path]) => path.startsWith('reportEmployeePeriods/'));
+  expect(reports.map(([,row]) => row.reconciliationCount)).toEqual([0,0,0]);
+  await writes.updateRecord(ref, {});
+  expect(reports.every(([path]) => store.records.get(path).reconciliationCount === 0)).toBe(true);
+});
+
+it.each([undefined, null])('preserves receipt-derived non-EMI paid totals when the scalar is %p', async totalPaidAmount => {
+  const source = { saleDate: '2026-10-28', grandTotal: 1000, paymentType: 'finance', salePayments: [{ amount: 300 }], ...(totalPaidAmount === undefined ? {} : { totalPaidAmount }) };
+  const { actions, seed, store } = setup(source); await seed();
+  expect(store.records.get('sales/s1').outstandingPaymentAmount).toBe(700);
+  const result = await actions.recordSalePayment(store.db, 's1', receipt(50), 'next');
+  expect(result).toMatchObject({ totalPaidAmount: 350, outstandingPaymentAmount: 650 });
+  expect(result.salePayments.map(p => p.amount)).toEqual([300,50]);
+});

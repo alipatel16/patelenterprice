@@ -46,3 +46,18 @@ test('REST migration performs no commit if the transaction budget is exhausted',
   await assert.rejects(store.backfill('customers', 'c1', makeBudget({ reads: 1, writes: 10 })), error => error.code === 'migration/budget');
   assert.equal(requests.some(route => route.endsWith(':commit')), false);
 });
+
+test('preserves valid Firestore non-finite double values when backfilling legacy documents', async () => {
+  const fields = { legacyRate: { doubleValue: 'NaN' }, upper: { doubleValue: 'Infinity' }, lower: { doubleValue: '-Infinity' }, grandTotal: { integerValue: '500' } };
+  assert.deepEqual(encodeFields(decodeFields(fields)), fields);
+});
+
+test('retries a conflicted transaction with the server retry hint and one stable action token', async () => {
+  const begins=[],commits=[];
+  const fetcher=async(url,options)=>{const body=JSON.parse(options.body);if(url.endsWith(':beginTransaction')){begins.push(body);return{ok:true,json:async()=>({transaction:`t${begins.length}`})};}if(url.endsWith(':batchGet')){const name=body.documents[0];return{ok:true,json:async()=>name.endsWith('/customers/c1')?[{found:{name,fields:{name:{stringValue:'Test Customer'}}}}]:[{missing:name}]};}if(url.endsWith(':commit')){commits.push(body);return commits.length===1?{ok:false,status:409}:{ok:true,json:async()=>({})};}return{ok:true,json:async()=>({})};};
+  const store=createRestStore({project:'demo-retry',origin:'http://127.0.0.1:8080',fetcher});
+  const result=await store.backfill('customers','c1',makeBudget({reads:100,writes:100}));
+  assert.equal(result.applied,true);assert.equal(commits.length,2);
+  assert.equal(begins[1].options.readWrite.retryTransaction,'t1');
+  assert.equal(commits[0].writes[0].update.fields._writeToken.stringValue,commits[1].writes[0].update.fields._writeToken.stringValue);
+});

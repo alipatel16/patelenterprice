@@ -30,7 +30,7 @@ function encodeValue(value) {
   if (typeof value === 'boolean') return { booleanValue: value };
   if (typeof value === 'string') return { stringValue: value };
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw Error('Invalid source number');
+    if (!Number.isFinite(value)) return { doubleValue: Number.isNaN(value) ? 'NaN' : value > 0 ? 'Infinity' : '-Infinity' };
     return Number.isSafeInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
   }
   if (value instanceof Timestamp) return { timestampValue: new Date(value.seconds * 1000).toISOString().replace(/\.\d{3}Z$/, `.${String(value.nanoseconds).padStart(9, '0')}Z`) };
@@ -52,6 +52,8 @@ function withBackfill(store, driver) {
     if (!current || (current._projectionVersion === 2 && current.searchVersion === 2)) return undefined;
     return current;
   }));
+  store.refreshDerived = (collection, id, budget) => driver.withBudget(budget, () =>
+    writes.mutateRecord(makeReference(store.db, `${collection}/${id}`), current => current ? {} : undefined));
   return store;
 }
 function createMemoryStore(initial = new Map()) {
@@ -93,8 +95,9 @@ function createRestStore({ project, origin = 'https://firestore.googleapis.com',
   const driver = { doc: (_, ...parts) => makeReference(db, parts.join('/')),
     withBudget: async (current, callback) => { budget = current; try { return await callback(); } finally { budget = null; } },
     runTransaction: async (_, callback) => {
+      let retryTransaction;
       for (let attempt = 0; attempt < 5; attempt++) {
-        const { transaction } = await request(':beginTransaction', { options: { readWrite: {} } });
+        const { transaction } = await request(':beginTransaction', { options: { readWrite: retryTransaction ? { retryTransaction } : {} } });
         const pending = [];
         try {
           const result = await callback({ get: async ref => {
@@ -110,7 +113,11 @@ function createRestStore({ project, origin = 'https://firestore.googleapis.com',
           return result;
         } catch (error) {
           await request(':rollback', { transaction }).catch(() => {});
-          if (error.code === 'firestore/aborted' && attempt < 4) continue;
+          if (error.code === 'firestore/aborted' && attempt < 4) {
+            retryTransaction = transaction;
+            await new Promise(resolve => setTimeout(resolve, Math.min(100 * (2 ** attempt) + Math.random() * 100, 2000)));
+            continue;
+          }
           throw error;
         }
       }

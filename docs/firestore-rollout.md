@@ -1,6 +1,31 @@
 # Firestore data access v2 — verification and rollout
 
-Implementation branch: `codex/firestore-data-access`. Original checkout and production databases have not been changed by this implementation. Both verified backups remain outside Git. Production deployment and backfill require separate approval and explicit operation budgets. The owner has temporarily enabled billing for the Furniture migration and may enable it for Electronics if needed; the ongoing design still targets low Firestore usage.
+Implementation branch: `codex/firestore-data-access`. The original checkout remains separate. After the owner approved both live migrations, database backfill, validation and search readiness were completed for both projects on 28 October 2026. Both projects now have billing enabled by the owner. Fresh verified backups remain outside Git. No hosted frontend deployment or merge into the original checkout was performed by the agent.
+
+## Completed live setup — 28 October 2026
+
+The owner explicitly approved “Run both migrations.” Fresh snapshots contained 5,868 Electronics and 9,552 Furniture source records. Snapshot counts, recursive collection discovery and SHA-256 verification passed before writes.
+
+| Store | Source records processed | Invoices validated | Unpaid EMI rows | Product period rows | Employee period rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Electronics | 5,868 | 876 | 33 | 1,452 | 478 |
+| Furniture | 9,552 | 2,234 | 186 | 7,050 | 821 |
+
+All preserved source fields—including amounts, payment histories and delivery information—matched the fresh backups. Attendance-month day maps, checklist-day counts, unpaid installment rows and report metrics reconciled to their sources with zero validation discrepancies. Readiness version 2 now includes all 23 required source/supporting collections in each project. All 204 bounded query/aggregate variants passed against production in each project; all 153 indexes are ready.
+
+The transaction scheduler paused safely on contention and resumed from checkpoints. Valid legacy Firestore NaN/Infinity values are now preserved by the REST codec; no such value was replaced with zero or null. REST retries use the server transaction retry hint and bounded jittered backoff. These tooling fixes have failing-then-passing regressions and received a scoped read-only review with no actionable regression. The Node tooling suite now has 28 passing tests and one opt-in emulator test skipped; the application code remains at 185 passing tests.
+
+Electronics reached its free read quota during final validation. After the owner enabled billing and Firestore began accepting reads, validation and readiness publication completed. Furniture completed within its configured backfill budget. Conservative backfill counters, including retries and a restart reserve: Electronics 21,258 reads / 15,399 writes; Furniture 44,234 reads / 34,638 writes. Fresh backups, independent validation reads and query checks are additional operations; these counters are not a billing statement.
+
+Raw snapshots, checkpoints, query checks and field-by-field reconciliation reports remain private outside Git in the surrounding `firestore-audit` directory. Historical financial inconsistencies remain flagged for owner review; they were not automatically corrected. Refresh the updated app after readiness publication to clear its prior not-ready cache. Do not rerun the migration to clear a browser cache. Future migrations still require explicit approval and budgets.
+
+## Invoice payment validation correction — 28 October 2026
+
+The first production validation policy incorrectly treated the historical EMI `totalPaidAmount` convention (installment receipts only, with `downPayment` separate) as an inconsistency. The invoice creation form also continued using that convention and rounded every equal installment independently. The app now recognizes exact legacy inclusive/exclusive totals, accepts only demonstrable historical equal-installment rounding using the original `toFixed(2)` calculation, and retains genuine mismatch checks. New EMI invoices store inclusive collected totals, distribute integer cents exactly, and clamp end-of-month due dates. Subsequent EMI receipts use the effective inclusive total and preserve existing histories and operation-id replay protection. Non-EMI invoices without a paid scalar retain their receipt-history fallback.
+
+Invoice details recompute validation from the requested invoice rather than trusting an older materialized warning. Refreshing validation subtracts the stored report reconciliation contribution before adding its new contribution, preventing stale report counts. Confirmed false-positive records were refreshed through the same tested transaction adapter: 11 Electronics and 40 Furniture invoices, with original source fields compared and preserved. Their unpaid EMI documents were verified against the refreshed source. One Electronics invoice retains a genuine paid-total mismatch for owner review; no financial value was guessed or repaired.
+
+Validation: 198 application tests across 31 suites; 28 Node tooling tests passed with one opt-in emulator test skipped; production build succeeded (`main.8b13fbb1.js`). Scoped code review initially caught two compatibility edges, both reproduced and fixed; its final review found no further actionable issues. The database flag refresh is live; this frontend correction must be used from the updated checkout/build or deployed by the owner for hosted users.
 
 ## Result
 
@@ -17,7 +42,7 @@ Employee calendars/payroll use visible employee-month summaries. Reports query r
 - Offline migration and complete in-memory transaction simulation succeeded against **all 5,865 Electronics and 9,527 Furniture documents**, with zero derivation/transaction errors. Original source IDs and financial/history fields were retained. Review issues remain attached to 12 and 38 source records respectively.
 - The simulated queues contain **33 Electronics and 184 Furniture unpaid installments**, matching the backup census. A mismatched schedule is flagged and remains discoverable.
 - The AST census (`firestore-read-census.json`) covers 103 direct/shared access sites and reports zero unbounded ordinary SDK reads or source-write adapter bypasses. Per-domain implementation reports informed the dispositions. The census is a regression guard; query/transaction/UI tests provide behavioral evidence.
-- Prepared **146 composite indexes**, including all 20 deployed index shapes captured in both backups; none have been deployed or removed. Embedded histories and employee-month day maps have explicit single-field index exemptions.
+- Deployed **153 composite indexes** in both projects, retaining the original 20 and all 146 initial rollout shapes. Live query validation identified seven additional ordering variants for aggregate totals and complaint date filtering; these were added without deleting indexes. Embedded histories and employee-month day maps have explicit single-field index exemptions.
 
 The emulator checks syntax, rules and real transport behavior. It does **not** enforce Native-mode composite index availability or reproduce production quota billing. Index build readiness and exact query acceptance must be checked separately before publishing collection readiness. Aggregation/pagination reduce returned documents; index work can still grow with the data. Firebase documents the free quota and index limits in [usage and limits](https://firebase.google.com/docs/firestore/quotas) and [index types](https://firebase.google.com/docs/firestore/query-data/index-overview).
 

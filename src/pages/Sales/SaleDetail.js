@@ -1,3 +1,4 @@
+import { deriveSaleState, saleCollectedAmount } from '../../data/projections';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, Grid, Chip, Divider,
@@ -58,7 +59,7 @@ const generateInvoiceHTML = (sale, installments, company, customer) => {
   const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(n || 0);
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
-  const totalSalePaid = sale.totalPaidAmount ?? salePayments.reduce((s, p) => s + (p.amount || 0), 0);
+  const totalSalePaid = saleCollectedAmount(sale) ?? 0;
   const emiInstallmentsPaid = isEMI
     ? installments.reduce((s, i) => s + (installmentPaid(i) ?? 0), 0)
     : 0;
@@ -231,7 +232,7 @@ const printInvoice = (sale, installments, company, customer) => {
 const printReceipt = (sale, payment, company) => {
   const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(n || 0);
   const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-  const totalPaid = sale.totalPaidAmount ?? 0;
+  const totalPaid = saleCollectedAmount(sale) ?? 0;
   const balance = (sale.grandTotal || 0) - totalPaid;
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Payment Receipt</title>
@@ -518,7 +519,7 @@ const SaleDetail = () => {
     try {
       const saleData = await getKnownDocument(db, 'sales', id, { ttlMs: 0 });
       if (!saleData) { toast.error('Sale not found'); navigate('/sales'); return; }
-      setSale(saleData);
+      setSale({ ...saleData, ...deriveSaleState(saleData) });
 
       // Fetch customer address from customers collection for print invoice
       if (saleData.customerId) {
@@ -576,7 +577,7 @@ const SaleDetail = () => {
   const overdueCount = installments.filter(i => getInstallmentStatus(i) === 'overdue').length;
 
   const salePayments = sale.salePayments || [];
-  const totalSalePaid = sale.totalPaidAmount ?? salePayments.reduce((s, p) => s + p.amount, 0);
+  const totalSalePaid = saleCollectedAmount(sale) ?? 0;
   const saleBalance = (sale.grandTotal || 0) - totalSalePaid;
 
   return (

@@ -10,8 +10,8 @@ function indexForQuery(collection, { filters = [], sort = [], sums = [] }) {
   filters.filter(([field, op]) => ['==', 'in'].includes(op) && !ordered.has(field)).sort(([a], [b]) => a.localeCompare(b)).forEach(([field]) => add(field, { order: 'ASCENDING' }));
   filters.filter(([, op]) => op === 'array-contains').forEach(([field]) => add(field, { arrayConfig: 'CONTAINS' }));
   sort.forEach(([field, direction]) => add(field, { order: direction === 'desc' ? 'DESCENDING' : 'ASCENDING' }));
-  filters.filter(([, op]) => !['==', 'in', 'array-contains'].includes(op)).forEach(([field]) => add(field, { order: 'ASCENDING' }));
-  sums.forEach(field => add(field, { order: 'ASCENDING' }));
+  filters.filter(([, op]) => !['==', 'in', 'array-contains'].includes(op)).forEach(([field]) => add(field, { order: sort.at(-1)?.[1] === 'desc' ? 'DESCENDING' : 'ASCENDING' }));
+  [...sums].sort().forEach(field => add(field, { order: 'ASCENDING' }));
   return { collectionGroup: collection, queryScope: 'COLLECTION', fields };
 }
 function choices(fields) {
@@ -66,7 +66,7 @@ function runtimeQueryShapes() {
 }
 function generateIndexes() {
   const indexes = new Map();
-  for (const index of require('./firestore-existing-indexes.json')) indexes.set(JSON.stringify(index), index);
+  for (const index of [...require('./firestore-existing-indexes.json'), ...require('./firestore-deployed-indexes.json')]) indexes.set(JSON.stringify(index), index);
   for (const { collection, options } of runtimeQueryShapes()) {
     const index = indexForQuery(collection, options);
     if (index.fields.length > 1) indexes.set(JSON.stringify(index), index);

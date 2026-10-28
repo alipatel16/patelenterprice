@@ -54,3 +54,12 @@ test('new sales search indexes reflect the filter arguments actually passed by S
   assert.ok(newSearchIndexes.length > 0);
   assert.ok(newSearchIndexes.every(index => index.fields.every(field => field.fieldPath !== 'companyId')), 'unused company filter must not create sales search indexes');
 });
+
+test('native aggregate indexes use canonical field order for multiple sums', () => {
+  const index=indexForQuery('reportProductPeriods',{filters:[['periodType','==','daily'],['periodKey','==','2026-10-28']],sums:['quantity','revenue','invoiceCount','reconciliationCount','undatedInvoiceCount']});
+  assert.deepEqual(index.fields.map(f=>f.fieldPath),['periodKey','periodType','invoiceCount','quantity','reconciliationCount','revenue','undatedInvoiceCount']);
+});
+test('implicit inequality order inherits the last explicit descending order', () => {
+  const index=indexForQuery('complaints',{filters:[['status','in',['resolved','closed']],['complaintDueDate','<','2026-10-28']],sort:[['createdAt','desc']]});
+  assert.deepEqual(index.fields,[{fieldPath:'status',order:'ASCENDING'},{fieldPath:'createdAt',order:'DESCENDING'},{fieldPath:'complaintDueDate',order:'DESCENDING'}]);
+});

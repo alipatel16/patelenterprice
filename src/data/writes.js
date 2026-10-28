@@ -171,7 +171,7 @@ export function createWriteAdapters(driver = { doc, runTransaction }) {
           _deleteMarkerId: deletionRef.id, _writeToken: writeToken });
       }
       const projectedPrevious = previous?._projectionVersion === PROJECTION_VERSION ? previous : null;
-      const reportChanges = collection === 'sales' ? diffRows(buildReportContributions(id, projectedPrevious), buildReportContributions(id, next)) : [];
+      const reportChanges = collection === 'sales' ? diffRows(buildReportContributions(id, projectedPrevious, { useStoredReconciliation: true }), buildReportContributions(id, next)) : [];
       const employeeChanges = buildEmployeeSummaryChanges(collection, id, projectedPrevious, next).filter(change => !same(change.before, change.after));
       const dueChanges = collection === 'sales' ? diffRows(buildEmiDueDocuments(id, previous), buildEmiDueDocuments(id, next)) : [];
       const writes = [{ ref: reference, data: next }];

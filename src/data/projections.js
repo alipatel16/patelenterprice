@@ -22,7 +22,9 @@ const employeeReportingKey = sale => sale.salespersonId ? `user:${sale.salespers
 function analyzeSale(sale) {
   const issues = [], financialWarnings = [];
   const warn = issue => { financialWarnings.push(issue); issues.push(issue); };
-  const total = money(sale.grandTotal), down = money(sale.downPayment ?? 0), storedPaid = money(sale.totalPaidAmount ?? 0);
+  const legacyReceipts = sale.paymentType !== 'emi' && Array.isArray(sale.salePayments) ? sale.salePayments.map(payment => money(payment.amount)) : [];
+  const legacyCollected = legacyReceipts.some(amount => amount === null) ? null : sum(legacyReceipts);
+  const total = money(sale.grandTotal), down = money(sale.downPayment ?? 0), storedPaid = money(sale.totalPaidAmount ?? legacyCollected);
   if (!validDate(sale.saleDate)) issues.push('invalid-sale-date');
   if (total === null) warn('invalid-grand-total');
   if (down === null) warn('invalid-down-payment');
@@ -52,12 +54,27 @@ function analyzeSale(sale) {
     return { installmentNumber: number, dueDate, amount, paidAmount: paid, dueDateChangeCount: inst.dueDateChangeCount ?? 0,
       remainingAmount: amount === null || paid === null ? null : roundMoney(Math.max(0, amount - paid)) };
   });
+  let collectedAmount = storedPaid;
   if (isEmi) {
     if (!rows.length) warn('missing-emi-schedule');
-    if (total !== null && down !== null && rows.every(row => row.amount !== null) &&
-      Math.abs(sum(rows.map(row => row.amount)) + down - total) > 0.009) warn('emi-principal-mismatch');
-    if (storedPaid !== null && down !== null && rows.every(row => row.paidAmount !== null) &&
-      Math.abs(sum(rows.map(row => row.paidAmount)) + down - storedPaid) > 0.009) warn('emi-paid-total-mismatch');
+    if (total !== null && down !== null && rows.every(row => row.amount !== null)) {
+      const principal = sum(rows.map(row => row.amount));
+      // The old form rounded every equal installment independently. Recognize
+      // that exact format without permitting arbitrary principal differences.
+      const legacyRounded = sale.emiScheduleVersion !== 2 && rows.length > 0 && total >= down &&
+        rows.every(row => row.amount === Number(((total - down) / rows.length).toFixed(2))) &&
+        Math.abs(principal + down - total) <= rows.length * 0.005 + 0.000001;
+      if (Math.abs(principal + down - total) > 0.009 && !legacyRounded) warn('emi-principal-mismatch');
+    }
+    if (storedPaid !== null && down !== null && rows.every(row => row.paidAmount !== null)) {
+      const installmentTotal = sum(rows.map(row => row.paidAmount));
+      const inclusive = sum([installmentTotal, down]);
+      // Legacy invoices stored EMI receipts only; new invoices include the
+      // separately stored down payment. Both must agree exactly with history.
+      const legacyExclusive = sale.paymentAccountingVersion !== 2 && Math.abs(storedPaid - installmentTotal) < 0.009;
+      if (Math.abs(inclusive - storedPaid) > 0.009 && !legacyExclusive) warn('emi-paid-total-mismatch');
+      collectedAmount = inclusive;
+    } else collectedAmount = null;
   }
   const unpaid = rows.filter(row => row.remainingAmount === null || row.remainingAmount > 0);
   const emiOutstanding = unpaid.some(row => row.remainingAmount === null) ? null : sum(unpaid.map(row => row.remainingAmount));
@@ -81,8 +98,9 @@ function analyzeSale(sale) {
     financialWarnings: [...new Set(financialWarnings)], financialReconciliationRequired: financialWarnings.length > 0,
     reconciliationIssues: [...new Set(issues)], needsReconciliation: issues.length > 0,
   };
-  return { state, unpaid };
+  return { state, unpaid, collectedAmount };
 }
+export function saleCollectedAmount(sale = {}) { return analyzeSale(sale).collectedAmount; }
 export function deriveSaleState(sale = {}) { return analyzeSale(sale).state; }
 export function deriveComplaintState(complaint = {}) {
   const valid = validDate(complaint.expectedResolutionDate);
@@ -103,9 +121,12 @@ export function buildEmiDueDocuments(saleId, sale) {
       reconciliationIssues: state.reconciliationIssues, needsReconciliation: state.needsReconciliation }) }));
 }
 
-export function buildReportContributions(saleId, sale) {
+export function buildReportContributions(saleId, sale, { useStoredReconciliation = false } = {}) {
   if (!sale) return [];
   const state = deriveSaleState(sale);
+  // Subtract the contribution that was actually materialized before applying
+  // a revised validation policy. Re-deriving both sides would leave stale counts.
+  if (useStoredReconciliation && typeof sale.needsReconciliation === 'boolean') state.needsReconciliation = sale.needsReconciliation;
   const dated = validDate(sale.saleDate);
   const periods = [...(dated ? [['daily', sale.saleDate], ['monthly', sale.saleDate.slice(0, 7)]] : []), ['lifetime', 'all']];
   const groups = new Map();

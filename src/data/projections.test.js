@@ -20,8 +20,8 @@ it('keeps paid full-payment invoices settled even when historical totalPaidAmoun
   expect(deriveSaleState({ paymentType: 'full_payment', paymentStatus: 'paid', grandTotal: 1000,
     totalPaidAmount: 0 })).toMatchObject({ hasOutstandingPayment: false, outstandingPaymentAmount: 0 });
 });
-it('keeps mismatched schedules discoverable and flags totals excluding the down payment', () => {
-  const mismatch = { ...sale, grandTotal: 2000, totalPaidAmount: 450 };
+it('keeps mismatched schedules discoverable and validates new inclusive paid totals', () => {
+  const mismatch = { ...sale, grandTotal: 2000, totalPaidAmount: 450, paymentAccountingVersion: 2 };
   expect(deriveSaleState(mismatch)).toMatchObject({ emiOutstandingAmount: 350, financialReconciliationRequired: true,
     financialWarnings: expect.arrayContaining(['emi-principal-mismatch', 'emi-paid-total-mismatch']) });
   expect(buildEmiDueDocuments('s1', mismatch)[0].data).toMatchObject({ remainingAmount: 350,
@@ -103,4 +103,22 @@ it('derives a valid baseline without receipts and zero only when the baseline is
   const source = { ...sale, totalPaidAmount: 300, emiInstallments: [{ installmentNumber: 1, amount: 800, dueDate: '2026-11-05', paidAmountBaseline: 100, payments: [] }] };
   expect(buildEmiDueDocuments('s', source)[0].data).toMatchObject({ paidAmount: 100, remainingAmount: 700 });
   expect(buildEmiDueDocuments('s', { ...source, emiInstallments: [{ ...source.emiInstallments[0], paidAmountBaseline: 0 }] })[0].data).toMatchObject({ paidAmount: 0, remainingAmount: 800 });
+});
+
+it('recognizes legacy totals that recorded only installment receipts', () => {
+  const source = { ...sale, totalPaidAmount: 450 };
+  expect(deriveSaleState(source).financialReconciliationRequired).toBe(false);
+  expect(deriveSaleState({ ...source, paymentAccountingVersion: 2 }).financialWarnings).toContain('emi-paid-total-mismatch');
+});
+
+it.each([[1000, 200, 3, 266.67], [100, 0, 6, 16.67], [100, 0, 12, 8.33]])('accepts only verifiable legacy equal-installment rounding (%p)', (grandTotal, downPayment, months, amount) => {
+  const source = { ...sale, grandTotal, downPayment, totalPaidAmount: 0, emiInstallments: Array.from({ length: months }, (_, i) => ({ installmentNumber: i + 1, amount, paidAmount: 0, payments: [], dueDate: '2026-11-01' })) };
+  expect(deriveSaleState(source).financialReconciliationRequired).toBe(false);
+  expect(deriveSaleState({ ...source, grandTotal: grandTotal + 1 }).financialWarnings).toContain('emi-principal-mismatch');
+});
+
+it('matches the legacy form rounding at binary half-cent boundaries', () => {
+  const source = { ...sale, grandTotal: 1000, downPayment: 199.99, totalPaidAmount: 0,
+    emiInstallments: [1,2].map(installmentNumber => ({ installmentNumber, amount: 400, paidAmount: 0, dueDate: '2026-11-01', payments: [] })) };
+  expect(deriveSaleState(source).financialReconciliationRequired).toBe(false);
 });

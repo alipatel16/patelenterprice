@@ -1,6 +1,6 @@
 import { doc } from 'firebase/firestore';
 import { mutateRecord } from './writes';
-import { deriveSaleState, numeric, roundMoney, validDate } from './projections';
+import { deriveSaleState, numeric, roundMoney, validDate, saleCollectedAmount } from './projections';
 
 export const installmentPaid = inst => {
   if (inst.paidAmount != null) {
@@ -52,8 +52,8 @@ export function createPaymentActions({ doc: reference = doc, mutateRecord: mutat
           paidAmount: roundMoney(priorPaid + receipt.amount),
           status: roundMoney(priorPaid + receipt.amount) >= amount ? 'paid' : 'partial', payments: [...(inst.payments || []), receipt],
         });
-        const totalPaidAmount = roundMoney(numeric(current.totalPaidAmount ?? 0) + receipt.amount);
-        return { emiInstallments, totalPaidAmount,
+        const totalPaidAmount = roundMoney(saleCollectedAmount(current) + receipt.amount);
+        return { emiInstallments, totalPaidAmount, paymentAccountingVersion: 2,
           paymentStatus: emiInstallments.every(inst => installmentPaid(inst) >= Number(inst.amount)) ? 'paid' : 'partial', updatedAt: now() };
       }, operationId);
     },
@@ -66,7 +66,7 @@ export function createPaymentActions({ doc: reference = doc, mutateRecord: mutat
         if (state.outstandingPaymentAmount === null) fail('Invoice balance needs reconciliation', 'data-access/reconciliation-required');
         const history = current.salePayments || [];
         if (!Array.isArray(history) || history.some(p => numeric(p.amount) === null)) fail('Payment history needs reconciliation', 'data-access/reconciliation-required');
-        const prior = numeric(current.totalPaidAmount ?? 0);
+        const prior = saleCollectedAmount(current);
         if (roundMoney(history.reduce((sum, p) => sum + Number(p.amount), 0)) > prior) fail('Payment history exceeds the stored paid amount', 'data-access/reconciliation-required');
         if (receipt.amount > state.outstandingPaymentAmount) fail('Payment exceeds the current invoice balance');
         const totalPaidAmount = roundMoney(prior + receipt.amount);

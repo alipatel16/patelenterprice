@@ -1,0 +1,2654 @@
+[
+  {
+    "collectionGroup": "attendanceLogs",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "brandHierarchies",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "brandName",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "brandHierarchies",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistInstances",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "completed",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistInstances",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "completed",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistInstances",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistInstances",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "date",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "userId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistTemplates",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "checklistTemplates",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "title",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "assigneeType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "complaintDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "complaints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "status",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "category",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customerType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "customers",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emi_installments",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "saleId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "installmentNumber",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "needsReconciliation",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "needsReconciliation",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "needsReconciliation",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "needsReconciliation",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "dueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "emiDues",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "remainingAmount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "giftInvoices",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "giftInvoices",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "date",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "giftSets",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "giftSets",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "inventory",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "inventory",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "productName",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "products",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "products",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "purchases",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "companyId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "companyId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "companyId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "companyId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "quotations",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "reconciliationCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "undatedInvoiceCount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportEmployeePeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "reconciliationCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "undatedInvoiceCount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportJobRows",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "asOfRevision",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "jobId",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "reconciliationCount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "undatedInvoiceCount",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "invoiceCount",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "quantity",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "revenue",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "reportProductPeriods",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "periodType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "periodKey",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "createdAt",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "grandTotal",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "actualDeliveryDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "deliveryDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "hasOutstandingPayment",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "actualDeliveryDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "hasOutstandingPayment",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "actualDeliveryDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "actualDeliveryDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "deliveryDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "deliveryType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "exchangeReceived",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "exchangeState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "exchangeState",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasExchange",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasPendingEmi",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "emiOutstandingAmount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "grandTotal",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasPendingEmi",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "nextEmiDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasPendingEmi",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "emiOutstandingAmount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "grandTotal",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "hasPendingEmi",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nextEmiDueDate",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "invoiceType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "isDelivered",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentStatus",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "emiOutstandingAmount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "grandTotal",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "emiOutstandingAmount",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "grandTotal",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "paymentType",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "reportEmployeeKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "reportEmployeeKey",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "createdAt",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "sales",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "saleDate",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "users",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "role",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "name",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "users",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "role",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "users",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "role",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "users",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "searchTokens",
+        "arrayConfig": "CONTAINS"
+      },
+      {
+        "fieldPath": "nameLower",
+        "order": "ASCENDING"
+      }
+    ]
+  }
+]
