@@ -35,11 +35,14 @@ export function createReportJobCommit(driver = { doc, runTransaction }) {
     const jobRef = driver.doc(db, 'reportJobs', candidate.jobId);
     const [versionSnap, jobSnap] = await Promise.all([tx.get(driver.doc(db, 'reportState', 'version')), tx.get(jobRef)]);
     const revision = versionSnap.data()?.revision || 0;
+    const existing = jobSnap.exists() ? jobSnap.data() : null;
+    // A delayed reader from an earlier source revision cannot replace the
+    // newer checkpoint, including through the invalidation branch.
+    if (existing && existing.asOfRevision > candidate.asOfRevision) return existing;
     if (revision !== candidate.asOfRevision) {
-      const invalidated = { ...candidate, complete: false, status: 'invalidated' };
+      const invalidated = { ...(existing?.asOfRevision === candidate.asOfRevision ? existing : candidate), complete: false, status: 'invalidated' };
       tx.set(jobRef, invalidated); return invalidated;
     }
-    const existing = jobSnap.exists() ? jobSnap.data() : null;
     if (existing && existing.asOfRevision === candidate.asOfRevision && JSON.stringify(existing.cursor) !== JSON.stringify(expectedCursor)) return existing;
     const grouped = new Map();
     page.rows.forEach(row => {
@@ -75,8 +78,8 @@ const firebaseTransport = {
 const runner = createReportJobRunner(firebaseTransport);
 export async function generateCustomReport(db, options, controls) {
   const readiness = await getKnownDocument(db, 'appSettings', 'dataAccessV2', { ttlMs: 0 });
-  if (readiness?.version !== 2 || !readiness.readyCollections?.includes(sourceCollection(options.dimension))) {
-    const error = new Error('Report summaries need migration before generation'); error.code = 'data-access/not-ready'; throw error;
+  if (readiness?.version !== 2 || ![sourceCollection(options.dimension), 'reportJobRows'].every(name => readiness.readyCollections?.includes(name))) {
+    const error = new Error('Report summaries and job output need migration before generation'); error.code = 'data-access/not-ready'; throw error;
   }
   const result = await runner(db, options, controls);
   invalidateCollections(db, ['reportJobs', 'reportJobRows']);
@@ -86,10 +89,10 @@ export async function validateReportJob(db, job) {
   if (!job?.complete || job.status !== 'complete' || (await firebaseTransport.revision(db)) !== job.asOfRevision) throw new Error('Report is incomplete or changed; regenerate before viewing rankings');
   return [['jobId', '==', job.jobId], ['asOfRevision', '==', job.asOfRevision]];
 }
-export async function fetchCustomReportPage(db, job, { cursor = null, metric = 'revenue' } = {}) {
+export async function fetchCustomReportPage(db, job, { cursor = null, metric = 'revenue', search = '' } = {}) {
   if (!['revenue', 'quantity', 'invoiceCount'].includes(metric)) failure('Invalid ranking metric');
   const filters = await validateReportJob(db, job);
-  const result = await fetchPage(db, 'reportJobRows', { filters, sort: [[metric, 'desc']], cursor, pageSize: 15 });
+  const result = await fetchPage(db, 'reportJobRows', { search, filters, sort: [[metric, 'desc']], cursor, pageSize: 15, requireReady: true });
   await validateReportJob(db, job);
   return result;
 }

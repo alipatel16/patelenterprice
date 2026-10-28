@@ -4,7 +4,7 @@ import { TablePagination } from '@mui/material';
 import { getKnownSnapshot as getDoc, loadChecklistDays } from './employeeData';
 import { updateRecord as updateDoc, setRecord as setDoc } from '../../data/writes';
 // src/pages/Employees/EmployeeDashboard.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Card, CardContent, Button, CircularProgress,
   Alert, Chip, Stack, Divider, Dialog, DialogTitle, DialogContent,
@@ -50,7 +50,12 @@ const EmployeeDashboard = () => {
   const taskPage = usePagedCollection(db && userId ? db : null, 'checklistInstances', { filters: [['userId', '==', userId || ''], ['date', '==', today]], sort: [['createdAt', 'asc']], pageSize: 15 });
   const checklists = taskPage.rows;
   const [checklistSummary, setChecklistSummary] = useState(null);
-  const [generationCursor, setGenerationCursor] = useState(0);
+  const generationIdentity = useRef(null);
+  if (generationIdentity.current?.db !== db || generationIdentity.current?.userId !== userId || generationIdentity.current?.today !== today) {
+    generationIdentity.current = { db, userId, today };
+  }
+  const [generationProgress, setGenerationProgress] = useState(null);
+  const generationCursor = generationProgress?.identity === generationIdentity.current ? generationProgress.cursor : 0;
   const [loading,      setLoading]      = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -88,6 +93,7 @@ const EmployeeDashboard = () => {
 
   // ── Generate checklists for today (called on clock-in) ─────────────────────
   const generateChecklists = async () => {
+    const identity = generationIdentity.current;
     const assigned = userProfile?.assignedChecklists || [];
     if (assigned.length === 0) return;
 
@@ -105,7 +111,7 @@ const EmployeeDashboard = () => {
         completed: false, completedAt: null, createdAt: new Date().toISOString(),
       }, { operationId: 'generate-checklist-v2' });
     }
-    setGenerationCursor(generationCursor + batch.length);
+    if (generationIdentity.current === identity) setGenerationProgress({ identity, cursor: generationCursor + batch.length });
     taskPage.refresh();
   };
 

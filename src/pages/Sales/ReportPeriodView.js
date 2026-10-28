@@ -15,10 +15,10 @@ import { getTodayStr } from '../Employees/employeeConstants';
 function Pager({ result }) {
   return <TablePagination component="div" count={result.total ?? -1} page={result.page} rowsPerPage={15} rowsPerPageOptions={[15]} onPageChange={(_, page) => result.setPage(page)} nextIconButtonProps={{ disabled: result.loading || !result.hasNext }} />;
 }
-function InvoiceDrilldown({ db, row, start, end, onClose }) {
+export function InvoiceDrilldown({ db, row, start, end, onClose }) {
   const navigate = useNavigate();
   const filters = [['reportEmployeeKey', '==', row.dimensionKey], ...(start ? [['saleDate', '>=', start]] : []), ...(end ? [['saleDate', '<=', end]] : [])];
-  const result = usePagedCollection(db, 'sales', { filters, sort: [['saleDate', 'desc']], pageSize: 15, requireReady: true });
+  const result = usePagedCollection(db, 'sales', { filters, sort: start || end ? [['saleDate', 'desc']] : [], pageSize: 15, requireReady: true });
   return <Dialog open onClose={onClose} fullWidth maxWidth="md"><DialogTitle>{row.employeeName} invoices</DialogTitle><DialogContent>
 
     <QueryStatus error={result.error} loading={result.loading} />
@@ -51,7 +51,7 @@ export default function ReportPeriodView({ dimension }) {
   const definition = periodQuery(dimension, { periodType: custom ? 'lifetime' : mode, periodKey, search, metric });
   const collectionName = custom ? 'reportJobRows' : definition.collectionName;
   const filters = custom ? [['jobId', '==', jobId], ['asOfRevision', '==', job?.asOfRevision ?? -1]] : definition.options.filters;
-  const ranking = usePagedCollection(allowed && (!custom || customReady) && !catalog ? db : null, collectionName, { ...definition.options, filters, requireReady: !custom });
+  const ranking = usePagedCollection(allowed && (!custom || customReady) && !catalog ? db : null, collectionName, { ...definition.options, filters, requireReady: true });
   const products = usePagedCollection(allowed && !employee && catalog && (!custom || customReady) ? db : null, 'products', { search, sort: [['nameLower', 'asc']], pageSize: 15, requireReady: true });
   const result = catalog ? products : ranking;
 
@@ -78,7 +78,7 @@ export default function ReportPeriodView({ dimension }) {
     setTotals(null);
     Promise.resolve().then(async () => {
       if (custom) await validateReportJob(db, job);
-      const values = await fetchReportTotals(db, collectionName, filters, !custom);
+      const values = await fetchReportTotals(db, collectionName, filters, true);
       if (custom) await validateReportJob(db, job);
       if (active) setTotals(values);
     }).catch(e => { if (active) { setError(e); if (custom) setJob(current => current ? { ...current, complete: false, status: 'invalidated' } : null); } });

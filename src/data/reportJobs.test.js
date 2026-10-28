@@ -65,3 +65,39 @@ it('rejects a page when the source changes after its read and before checkpoint 
   expect(result).toMatchObject({ complete: false, status: 'invalidated' });
   expect(s.rows.size).toBe(0);
 });
+
+it('a delayed revision 7 invocation cannot replace a revision 8 checkpoint or double-count resumed rows', async () => {
+  const { createReportJobCommit } = require('./reportJobs');
+  const { memoryPaymentStore } = require('./paymentTestStore');
+  const s = memoryPaymentStore();
+  s.records.set('reportState/version', { revision: 7 });
+  const commit = createReportJobCommit(s.driver);
+  const options = { dimension: 'employee', start: '2026-10-01', end: '2026-10-31' };
+  const sources = [10, 20].map((revenue, index) => ({ id: String(index), dimensionKey: 'user:u', revenue, quantity: 1, invoiceCount: 1, reconciliationCount: 0, undatedInvoiceCount: 0 }));
+  let unblock, pageRead;
+  const waiting = new Promise(resolve => { pageRead = resolve; });
+  const gate = new Promise(resolve => { unblock = resolve; });
+  let delayOldPage = true;
+  const transport = {
+    revision: async () => s.records.get('reportState/version').revision,
+    load: async (_, jobId) => s.records.get(`reportJobs/${jobId}`) || null,
+    page: async (_, __, cursor, size) => {
+      const offset = cursor || 0;
+      if (delayOldPage) { delayOldPage = false; pageRead(); await gate; }
+      return { rows: sources.slice(offset, offset + size), cursor: offset + size, hasNext: offset + size < sources.length };
+    },
+    commit,
+  };
+  const run = createReportJobRunner(transport);
+  const staleRun = run(s.db, options, { budget: 1, maxPageSize: 1 });
+  await waiting;
+  s.records.set('reportState/version', { revision: 8 });
+  const newer = await run(s.db, { ...options, restart: true }, { budget: 1, maxPageSize: 1 });
+  expect(newer).toMatchObject({ asOfRevision: 8, processed: 1, complete: false });
+  unblock(); await staleRun;
+  expect(s.records.get(`reportJobs/${newer.jobId}`)).toEqual(newer);
+  const complete = await run(s.db, { ...options, restart: true }, { budget: 2, maxPageSize: 1 });
+  expect(complete).toMatchObject({ asOfRevision: 8, processed: 2, complete: true });
+  const rows = [...s.records].filter(([path, row]) => path.startsWith('reportJobRows/') && row.asOfRevision === 8).map(([, row]) => row);
+  expect(rows).toEqual([expect.objectContaining({ revenue: 30, quantity: 2, invoiceCount: 2 })]);
+});

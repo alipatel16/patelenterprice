@@ -1,7 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ChecklistAdminView from './ChecklistAdminView';
-import ReportPeriodView from '../Sales/ReportPeriodView';
+import ReportPeriodView, { InvoiceDrilldown } from '../Sales/ReportPeriodView';
 import usePagedCollection from '../../hooks/usePagedCollection';
 import { loadChecklistDays } from './employeeData';
 
@@ -41,4 +41,17 @@ it('drills into a legacy employee bucket using its exact derived source key befo
   const request = usePagedCollection.mock.calls.filter(([db, name]) => db && name === 'sales').at(-1);
   expect(request).toBeTruthy();
   expect(request[2]).toMatchObject({ pageSize: 15, filters: expect.arrayContaining([['reportEmployeeKey', '==', 'legacy:duplicate name']]) });
+});
+
+it('lifetime invoice pages retain undated sources counted by the summary', async () => {
+  const sources = [{ id: 'dated', invoiceNumber: 'DATED-1', saleDate: '2026-10-01', grandTotal: 50 }, { id: 'undated', invoiceNumber: 'UNDATED-2', grandTotal: 100 }];
+  usePagedCollection.mockImplementation((_, __, options) => page(sources.filter(row => options.sort.every(([field]) => row[field] !== undefined))));
+  await act(async () => root.render(<InvoiceDrilldown db={{}} row={{ dimensionKey: 'legacy:unmatched', employeeName: 'Other / Direct' }} start="" end="" onClose={() => {}} />));
+  expect(document.body.textContent).toContain('UNDATED-2');
+  expect(usePagedCollection.mock.calls.at(-1)[2]).toMatchObject({ sort: [], pageSize: 15, filters: [['reportEmployeeKey', '==', 'legacy:unmatched']] });
+});
+it('date-specific invoice pages retain sale-date ordering and date constraints', async () => {
+  const empty = page([]); usePagedCollection.mockReturnValue(empty);
+  await act(async () => root.render(<InvoiceDrilldown db={{}} row={{ dimensionKey: 'user:u1', employeeName: 'Employee' }} start="2026-10-01" end="2026-10-31" onClose={() => {}} />));
+  expect(usePagedCollection.mock.calls.at(-1)[2]).toMatchObject({ sort: [['saleDate', 'desc']], pageSize: 15, filters: [['reportEmployeeKey', '==', 'user:u1'], ['saleDate', '>=', '2026-10-01'], ['saleDate', '<=', '2026-10-31']] });
 });
