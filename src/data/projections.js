@@ -39,7 +39,7 @@ function analyzeSale(sale) {
     const receipts = Array.isArray(inst.payments) ? inst.payments.map(payment => money(payment.amount)) : [];
     const historyPaid = receipts.some(value => value === null) ? null : sum(receipts);
     const baseline = inst.paidAmountBaseline === undefined ? 0 : money(inst.paidAmountBaseline);
-    const paid = money(inst.paidAmount ?? (receipts.length && historyPaid !== null && baseline !== null ? sum([baseline, historyPaid]) : 0));
+    const paid = money(inst.paidAmount ?? (historyPaid !== null && baseline !== null ? sum([baseline, historyPaid]) : null));
     if (amount === null) warn(`${prefix}-invalid-amount`);
     if (paid === null) warn(`${prefix}-invalid-paid-amount`);
     if (historyPaid === null) warn(`${prefix}-invalid-payment-history`);

@@ -86,3 +86,21 @@ it('validates a nonnegative legacy paid baseline plus recorded receipts', () => 
   expect(deriveSaleState({ ...one, emiInstallments: [{ ...one.emiInstallments[0], paidAmountBaseline: -1 }] }).financialReconciliationRequired).toBe(true);
   expect(deriveSaleState({ ...one, emiInstallments: [{ ...one.emiInstallments[0], paidAmountBaseline: 99 }] }).financialReconciliationRequired).toBe(true);
 });
+
+it.each([
+  [{ payments: [{ amount: 'bad' }] }, 'installment-1-invalid-payment-history'],
+  [{ payments: [{ amount: 50 }], paidAmountBaseline: -1 }, 'installment-1-invalid-paid-baseline'],
+  [{ payments: [], paidAmountBaseline: -1 }, 'installment-1-invalid-paid-baseline'],
+])('keeps an unknown installment balance in the review queue for malformed history or baseline (%p)', (history, warning) => {
+  const source = { ...sale, totalPaidAmount: 200, emiInstallments: [{ installmentNumber: 1, amount: 800, dueDate: '2026-11-05', ...history }] };
+  expect(deriveSaleState(source)).toMatchObject({ hasPendingEmi: true, emiOutstandingAmount: null,
+    financialReconciliationRequired: true, financialWarnings: expect.arrayContaining([warning]) });
+  expect(buildEmiDueDocuments('s', source)).toEqual([expect.objectContaining({ data: expect.objectContaining({
+    paidAmount: null, remainingAmount: null, needsReconciliation: true, financialWarnings: expect.arrayContaining([warning]) }) })]);
+});
+
+it('derives a valid baseline without receipts and zero only when the baseline is also zero', () => {
+  const source = { ...sale, totalPaidAmount: 300, emiInstallments: [{ installmentNumber: 1, amount: 800, dueDate: '2026-11-05', paidAmountBaseline: 100, payments: [] }] };
+  expect(buildEmiDueDocuments('s', source)[0].data).toMatchObject({ paidAmount: 100, remainingAmount: 700 });
+  expect(buildEmiDueDocuments('s', { ...source, emiInstallments: [{ ...source.emiInstallments[0], paidAmountBaseline: 0 }] })[0].data).toMatchObject({ paidAmount: 0, remainingAmount: 800 });
+});
