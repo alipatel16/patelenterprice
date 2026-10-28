@@ -2,7 +2,16 @@ import { doc } from 'firebase/firestore';
 import { mutateRecord } from './writes';
 import { deriveSaleState, numeric, roundMoney, validDate } from './projections';
 
-export const installmentPaid = inst => numeric(inst.paidAmount ?? (inst.payments || []).reduce((sum, p) => sum + Number(p.amount), 0));
+export const installmentPaid = inst => {
+  if (inst.paidAmount != null) {
+    const paid = numeric(inst.paidAmount);
+    return paid === null ? null : roundMoney(paid);
+  }
+  const baseline = numeric(inst.paidAmountBaseline === undefined ? 0 : inst.paidAmountBaseline);
+  const receipts = Array.isArray(inst.payments) ? inst.payments.map(p => numeric(p.amount)) : [];
+  if (baseline === null || receipts.some(amount => amount === null)) return null;
+  return roundMoney(roundMoney(baseline) + roundMoney(receipts.reduce((sum, amount) => sum + roundMoney(amount), 0)));
+};
 const fail = (message, code = 'data-access/invalid-payment') => { const error = new Error(message); error.code = code; throw error; };
 export const newPaymentOperationId = () => globalThis.crypto?.randomUUID?.() || `receipt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 function operation(value) {

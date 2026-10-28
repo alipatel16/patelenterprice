@@ -1,4 +1,4 @@
-import { createPaymentActions } from './payments';
+import { createPaymentActions, installmentPaid } from './payments';
 import { createWriteAdapters } from './writes';
 import { memoryPaymentStore } from './paymentTestStore';
 
@@ -84,4 +84,30 @@ it('preserves scalar-only legacy paid amounts through concurrent payments and re
   expect(sale.emiInstallments[0].payments.map(p => p.amount).sort((a,b) => a-b)).toEqual([50,75]);
   expect(sale.financialReconciliationRequired).toBe(false);
   expect(store.records.get('emiDues/s1_1').remainingAmount).toBe(575);
+});
+
+
+it.each([
+  [[], 100],
+  [[{ amount: 40 }], 140],
+])('uses the baseline and receipts for payment entry when the scalar is absent (%p)', async (history, initialPaid) => {
+  const source = { ...emi, totalPaidAmount: 200 + initialPaid, emiInstallments: [{ installmentNumber: 1, amount: 800, dueDate: '2024-02-01', paidAmountBaseline: 100, payments: history }] };
+  const { store, actions, seed } = setup(source); await seed();
+  expect(installmentPaid(source.emiInstallments[0])).toBe(initialPaid);
+  await expect(actions.recordEmiPayment(store.db, 's1', 1, receipt(801 - initialPaid), 'over')).rejects.toThrow(/exceeds/);
+  const first = await actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'first');
+  expect(first.emiInstallments[0].paidAmount).toBe(initialPaid + 50);
+  const second = await actions.recordEmiPayment(store.db, 's1', 1, receipt(25), 'second');
+  const replay = await actions.recordEmiPayment(store.db, 's1', 1, receipt(50), 'first');
+  expect(replay.emiInstallments[0]).toMatchObject({ paidAmountBaseline: 100, paidAmount: initialPaid + 75 });
+  expect(replay.emiInstallments[0].payments).toHaveLength(history.length + 2);
+  expect(second.financialReconciliationRequired).toBe(false);
+  expect(store.records.get('emiDues/s1_1').remainingAmount).toBe(800 - initialPaid - 75);
+});
+
+it.each([
+  { paidAmountBaseline: -1, payments: [] },
+  { paidAmountBaseline: 100, payments: [{ amount: 'bad' }] },
+])('does not guess installment paid amount from invalid history or baseline (%p)', installment => {
+  expect(installmentPaid(installment)).toBeNull();
 });
