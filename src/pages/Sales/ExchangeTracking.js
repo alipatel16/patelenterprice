@@ -1,25 +1,26 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TablePagination, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  TextField, Stack, Alert, CircularProgress, Tab, Tabs,
+  TextField, Stack, CircularProgress, Tab, Tabs,
   InputAdornment, Tooltip,
 } from '@mui/material';
 import {
-  SwapHoriz, CheckCircle, Search, Refresh, DoneAll, Inbox,
+  SwapHoriz, CheckCircle, Search, DoneAll,
 } from '@mui/icons-material';
-import {
-  collection, query, where, orderBy, limit,
-  getDocs, updateDoc, doc, serverTimestamp,
-} from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
+import { updateRecord } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { exchangeFilters, indiaDay } from '../../data/salesQueues';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
@@ -27,13 +28,13 @@ const TabPanel = ({ children, value, index }) =>
 // ─── Mark Received Dialog ─────────────────────────────────────────────────────
 
 const MarkReceivedDialog = ({ open, onClose, sale, onConfirm }) => {
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [receivedDate, setReceivedDate] = useState(indiaDay());
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setReceivedDate(new Date().toISOString().split('T')[0]);
+      setReceivedDate(indiaDay());
       setNotes('');
     }
   }, [open]);
@@ -89,88 +90,18 @@ const MarkReceivedDialog = ({ open, onClose, sale, onConfirm }) => {
 };
 
 // ─── Pending Exchange Tab ─────────────────────────────────────────────────────
-//
-// FIX: was limit(500) reading ALL sales then client-filtering to hasExchange.
-//      Now queries only sales with hasExchange === true server-side.
-//
-// ⚠️  COMPOSITE INDEX REQUIRED on first run:
-//      Collection : sales
-//      Fields     : hasExchange (Ascending) + saleDate (Descending)
-//      Firestore will log a clickable auto-create URL in the console.
-
-const PendingExchangeTab = ({ db, onReceived }) => {
+const PendingExchangeTab = ({ db, search, onSearch }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [allDocs, setAllDocs] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [markDialog, setMarkDialog] = useState(null);
-  const searchTimer = useRef(null);
-
-  const handleSearch = (v) => {
-    setSearch(v);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(v);
-      setPage(0);
-    }, 400);
-  };
-
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        // ── FIX: server-side filter on hasExchange ───────────────────────
-        // Before: limit(500) read every recent sale, discarding ~490 of them.
-        // After:  Firestore returns ONLY exchange sales (typically 5–20).
-        // The client-side exchangeReceived !== true check stays to handle
-        // legacy docs created before the exchangeReceived field existed.
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('hasExchange', '==', true),
-          orderBy('saleDate', 'desc'),
-          limit(200),                            // safety cap; was 500
-        ));
-        if (!active) return;
-        const docs = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => d.exchangeReceived !== true);  // exclude already-received
-        setAllDocs(docs);
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load exchange items: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    load();
-    return () => { active = false; };
-  }, [db, refreshKey]);
-
-  const filtered = useMemo(() => {
-    if (!debouncedSearch.trim()) return allDocs;
-    const s = debouncedSearch.toLowerCase();
-    return allDocs.filter(d =>
-      (d.invoiceNumber || '').toLowerCase().includes(s) ||
-      (d.customerName  || '').toLowerCase().includes(s) ||
-      (d.exchangeItem  || '').toLowerCase().includes(s)
-    );
-  }, [allDocs, debouncedSearch]);
-
-  const pageRows = useMemo(
-    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtered, page]
-  );
+  const view = usePagedCollection(db, 'sales', { search, filters: exchangeFilters('pending'), sort: [['saleDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
+  const { rows: pageRows, loading, page, setPage } = view;
+  const handleSearch = onSearch;
 
   const handleMarkReceived = async (receivedDate, notes) => {
-    await updateDoc(doc(db, 'sales', markDialog.id), {
+    await updateRecord(doc(db, 'sales', markDialog.id), {
       exchangeReceived: true,
       exchangeReceivedDate: receivedDate,
       exchangeReceivedNotes: notes || '',
@@ -179,8 +110,7 @@ const PendingExchangeTab = ({ db, onReceived }) => {
     toast.success('Exchange item marked as received!');
     setMarkDialog(null);
     setPage(0);
-    setRefreshKey(k => k + 1);
-    onReceived();
+    view.refresh();
   };
 
   return (
@@ -199,6 +129,7 @@ const PendingExchangeTab = ({ db, onReceived }) => {
         />
       </Box>
 
+      <QueryStatus error={view.error} search={search} />
       <Card>
         <TableContainer>
           <Table size="small">
@@ -279,11 +210,13 @@ const PendingExchangeTab = ({ db, onReceived }) => {
         </TableContainer>
         <TablePagination
           component="div"
-          count={filtered.length}
+          count={view.total ?? -1}
           page={page}
           rowsPerPage={PAGE_SIZE}
           onPageChange={(_, p) => setPage(p)}
           rowsPerPageOptions={[PAGE_SIZE]}
+          backIconButtonProps={{ disabled: loading || page === 0 }}
+          nextIconButtonProps={{ disabled: loading || !view.hasNext }}
         />
       </Card>
 
@@ -298,66 +231,18 @@ const PendingExchangeTab = ({ db, onReceived }) => {
 };
 
 // ─── Received Exchange Tab ────────────────────────────────────────────────────
-//
-// FIX: was limit(500) reading ALL sales then client-filtering to exchangeReceived.
-//      Now queries only received exchanges server-side.
-//
-// ⚠️  COMPOSITE INDEX REQUIRED on first run:
-//      Collection : sales
-//      Fields     : exchangeReceived (Ascending) + saleDate (Descending)
-
-const ReceivedExchangeTab = ({ db, refresh }) => {
+const ReceivedExchangeTab = ({ db, search, onSearch }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [allDocs, setAllDocs] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-    setLoading(true);
-
-    const load = async () => {
-      try {
-        // ── FIX: server-side filter on exchangeReceived ──────────────────
-        // Before: limit(500) read every recent sale, then filtered in memory.
-        // After:  Firestore returns ONLY received exchange sales.
-        const snap = await getDocs(query(
-          collection(db, 'sales'),
-          where('exchangeReceived', '==', true),
-          orderBy('saleDate', 'desc'),
-          limit(200),                            // safety cap; was 500
-        ));
-        if (!active) return;
-        // Sort by exchange received date (newest first); in memory because
-        // exchangeReceivedDate may be absent on older records.
-        const docs = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .sort((a, b) => (b.exchangeReceivedDate || '').localeCompare(a.exchangeReceivedDate || ''));
-        setAllDocs(docs);
-        setPage(0);
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load received exchanges: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    load();
-    return () => { active = false; };
-  }, [db, refresh]);
-
-  const pageRows = useMemo(
-    () => allDocs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [allDocs, page]
-  );
+  const view = usePagedCollection(db, 'sales', { search, filters: exchangeFilters('received'), sort: [['saleDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
+  const { rows: pageRows, loading, page, setPage } = view;
 
   return (
     <Card>
+      <TextField fullWidth size="small" placeholder="Search customer, phone, invoice or exchange item..." value={search} onChange={e => onSearch(e.target.value)} sx={{ my: 1 }} />
+      <QueryStatus error={view.error} search={search} />
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -420,11 +305,13 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
       </TableContainer>
       <TablePagination
         component="div"
-        count={allDocs.length}
+        count={view.total ?? -1}
         page={page}
         rowsPerPage={PAGE_SIZE}
         onPageChange={(_, p) => setPage(p)}
         rowsPerPageOptions={[PAGE_SIZE]}
+          backIconButtonProps={{ disabled: loading || page === 0 }}
+          nextIconButtonProps={{ disabled: loading || !view.hasNext }}
       />
     </Card>
   );
@@ -435,11 +322,7 @@ const ReceivedExchangeTab = ({ db, refresh }) => {
 const ExchangeTracking = () => {
   const { db } = useAuth();
   const [tab, setTab] = useState(0);
-  const [receivedRefresh, setReceivedRefresh] = useState(0);
-
-  const handleReceived = () => {
-    setReceivedRefresh(r => r + 1);
-  };
+  const [search, setSearch] = useState('');
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
@@ -466,10 +349,10 @@ const ExchangeTracking = () => {
       </Box>
 
       <TabPanel value={tab} index={0}>
-        <PendingExchangeTab db={db} onReceived={handleReceived} />
+        <PendingExchangeTab db={db} search={search} onSearch={setSearch} />
       </TabPanel>
       <TabPanel value={tab} index={1}>
-        <ReceivedExchangeTab db={db} refresh={receivedRefresh} />
+        <ReceivedExchangeTab db={db} search={search} onSearch={setSearch} />
       </TabPanel>
     </Box>
   );

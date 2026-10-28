@@ -1,42 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
-  Box, Typography, Card, CardActionArea, CardContent, Chip, Divider,
-  CircularProgress, Alert, Avatar, Stack, Badge, Tooltip,
-  TextField, InputAdornment, ToggleButtonGroup, ToggleButton,
-  LinearProgress, Collapse, IconButton,
+  Box, Typography, Card, CardActionArea, CardContent, Chip,
+  Alert, Avatar, Stack, Tooltip,
+  TextField, InputAdornment,
+  LinearProgress, Collapse, IconButton, Tabs, Tab, Button,
 } from '@mui/material';
 import {
   Warning, CheckCircle, Schedule, CalendarMonth,
-  Search, Person, Receipt, ExpandMore, ExpandLess,
+  Search, Receipt, ExpandMore, ExpandLess,
   History, PhoneAndroid, ArrowForwardIos,
 } from '@mui/icons-material';
-import {
-  collection, query, where, orderBy, getDocs, limit, startAfter,
-} from 'firebase/firestore';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { dueFilters, indiaDay } from '../../data/salesQueues';
+import { useIndiaDay, useQueueTotals } from '../../hooks/useSalesQueue';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { PAYMENT_TYPES } from '../../constants';
 import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
-
-const TODAY = new Date().toISOString().split('T')[0];
-const _sd = new Date();
-_sd.setDate(_sd.getDate() + 7);
-const SEVEN_DAYS = _sd.toISOString().split('T')[0];
-const PAGE_SIZE = 25; // sales loaded per batch
-
-// ─── Classify an installment ────────────────────────────────────────────────
-
-const classifyInst = (inst) => {
-  if ((inst.paidAmount || 0) >= inst.amount) return 'paid';
-  if (inst.dueDate < TODAY) return 'overdue';
-  if (inst.dueDate === TODAY) return 'today';
-  return 'upcoming';
-};
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
+  review: { label: 'Needs review', color: 'warning', bg: '#fffbeb', border: '#fcd34d', icon: <Warning />, avatarBg: '#d97706' },
   overdue: {
     label: 'Overdue',
     color: 'error',
@@ -67,7 +53,7 @@ const STATUS_CONFIG = {
 
 const daysLabel = (dueDate) => {
   const due = new Date(dueDate);
-  const now = new Date(TODAY);
+  const now = new Date(indiaDay());
   const diff = Math.round((due - now) / (1000 * 60 * 60 * 24));
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
@@ -83,7 +69,7 @@ const InstCard = ({ inst, sale, status, onClick }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const cfg = STATUS_CONFIG[status];
   const hasDueDateChange = (inst.dueDateChangeCount || 0) > 0;
-  const remaining = inst.amount - (inst.paidAmount || 0);
+  const remaining = inst.remainingAmount;
   const isPartial = (inst.paidAmount || 0) > 0;
 
   return (
@@ -147,7 +133,7 @@ const InstCard = ({ inst, sale, status, onClick }) => {
                 </Typography>
                 <Typography variant="caption" color="text.secondary">·</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  EMI #{inst.installmentNumber}/{sale.emiMonths}
+                  EMI #{inst.installmentNumber}{sale.emiMonths ? `/${sale.emiMonths}` : ''}
                 </Typography>
                 {!isMobile && sale.customerPhone && (
                   <>
@@ -174,7 +160,7 @@ const InstCard = ({ inst, sale, status, onClick }) => {
             {/* Right side: amount + date */}
             <Box textAlign="right" flexShrink={0}>
               <Typography variant="body2" fontWeight={800} color={`${cfg.color}.main`}>
-                {formatCurrency(remaining)}
+                {remaining == null ? 'Needs reconciliation' : formatCurrency(remaining)}
               </Typography>
               {isPartial && (
                 <Typography variant="caption" color="text.secondary" display="block">
@@ -182,7 +168,7 @@ const InstCard = ({ inst, sale, status, onClick }) => {
                 </Typography>
               )}
               <Chip
-                label={daysLabel(inst.dueDate)}
+                label={inst.dueDate ? daysLabel(inst.dueDate) : 'Date needs review'}
                 size="small"
                 color={cfg.color}
                 sx={{ mt: 0.25, height: 18, fontSize: 10 }}
@@ -204,7 +190,7 @@ const InstCard = ({ inst, sale, status, onClick }) => {
 
 // ─── Section with collapsible header ─────────────────────────────────────────
 
-const Section = ({ status, items, onNavigate }) => {
+const Section = ({ status, items, summary, onNavigate }) => {
   const [open, setOpen] = useState(true);
   const cfg = STATUS_CONFIG[status];
   if (!items.length) return null;
@@ -228,7 +214,7 @@ const Section = ({ status, items, onNavigate }) => {
             {cfg.label}
           </Typography>
           <Chip
-            label={items.length}
+            label={summary?.count ?? '—'}
             size="small"
             color={cfg.color}
             sx={{ height: 20, fontSize: 11, fontWeight: 700 }}
@@ -236,7 +222,7 @@ const Section = ({ status, items, onNavigate }) => {
         </Box>
         <Box display="flex" alignItems="center" gap={1}>
           <Typography variant="body2" fontWeight={700} color={`${cfg.color}.main`}>
-            {formatCurrency(items.reduce((s, i) => s + (i.inst.amount - (i.inst.paidAmount || 0)), 0))}
+            {summary?.amount == null ? '—' : formatCurrency(summary.amount)}
           </Typography>
           <IconButton size="small">
             {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
@@ -264,90 +250,17 @@ const Section = ({ status, items, onNavigate }) => {
 const EmiDues = () => {
   const { db } = useAuth();
   const navigate = useNavigate();
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [allLoaded, setAllLoaded] = useState(false);
-  const [lastDoc, setLastDoc] = useState(null);
+  const todayDate = useIndiaDay();
   const [search, setSearch] = useState('');
-
-  // Flat list of {inst, sale, saleId, status}
-  const [dueItems, setDueItems] = useState([]);
-
-  // ── Load sales batch ──
-  const loadBatch = useCallback(async (cursor = null) => {
-    const isFirst = !cursor;
-    if (isFirst) setLoading(true); else setLoadingMore(true);
-
-    try {
-      let q = query(
-        collection(db, 'sales'),
-        where('paymentType', '==', PAYMENT_TYPES.EMI),
-        orderBy('saleDate', 'desc'),
-        limit(PAGE_SIZE),
-      );
-      if (cursor) q = query(q, startAfter(cursor));
-
-      const snap = await getDocs(q);
-
-      if (snap.empty || snap.docs.length < PAGE_SIZE) setAllLoaded(true);
-
-      const newItems = [];
-      snap.docs.forEach(d => {
-        const sale = { id: d.id, ...d.data() };
-        const installments = sale.emiInstallments || [];
-        installments.forEach(inst => {
-          const status = classifyInst(inst);
-          if (status === 'paid') return; // skip fully paid
-          newItems.push({ inst, sale, saleId: d.id, status });
-        });
-      });
-
-      setDueItems(prev => isFirst ? newItems : [...prev, ...newItems]);
-      if (snap.docs.length > 0) setLastDoc(snap.docs[snap.docs.length - 1]);
-    } catch (e) {
-      console.error('[EmiDues] Load error:', e);
-    } finally {
-      if (isFirst) setLoading(false); else setLoadingMore(false);
-    }
-  }, [db]);
-
-  useEffect(() => {
-    if (db) loadBatch();
-  }, [db]);
-
-  // ── Filter by search ──
-  const filtered = dueItems.filter(item => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    return (
-      item.sale.customerName?.toLowerCase().includes(s) ||
-      item.sale.customerPhone?.includes(s) ||
-      item.sale.invoiceNumber?.toLowerCase().includes(s)
-    );
-  });
-
-  // ── Sort each group by dueDate ascending ──
-  const sortByDate = arr => [...arr].sort((a, b) => a.inst.dueDate.localeCompare(b.inst.dueDate));
-
-  const overdue  = sortByDate(filtered.filter(i => i.status === 'overdue'));
-  const today    = sortByDate(filtered.filter(i => i.status === 'today'));
-  const upcoming = sortByDate(filtered.filter(i => i.status === 'upcoming' && i.inst.dueDate <= SEVEN_DAYS));
-
-  const totalDue = filtered.reduce((s, i) => s + (i.inst.amount - (i.inst.paidAmount || 0)), 0);
-
-  // ── Summary counts ──
-  const totalOverdue  = dueItems.filter(i => i.status === 'overdue').length;
-  const totalToday    = dueItems.filter(i => i.status === 'today').length;
-  const totalUpcoming = dueItems.filter(i => i.status === 'upcoming' && i.inst.dueDate <= SEVEN_DAYS).length;
-
-  if (loading) return (
-    <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-      <CircularProgress />
-    </Box>
-  );
+  const [tab, setTab] = useState('overdue');
+  const plans = [...['overdue', 'today', 'upcoming', 'review'].map(name => ({ name, filters: dueFilters(name, todayDate), sums: { amount: 'remainingAmount' } })), { name: 'all', filters: [], sums: { amount: 'remainingAmount' } }];
+  const view = usePagedCollection(db, 'emiDues', { search, filters: dueFilters(tab, todayDate), sort: [['dueDate', 'asc']], pageSize: 15, requireReady: true });
+  const totals = useQueueTotals(db, 'emiDues', plans, search);
+  const items = view.rows.map(row => ({ inst: row, sale: row, saleId: row.saleId }));
+  const totalOverdue = totals.data?.overdue.count ?? '—';
+  const totalToday = totals.data?.today.count ?? '—';
+  const totalUpcoming = totals.data?.upcoming.count ?? '—';
+  const totalDue = totals.data?.all?.amount;
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 800, mx: 'auto' }}>
@@ -355,7 +268,7 @@ const EmiDues = () => {
       <Box mb={3}>
         <Typography variant="h5" fontWeight={700}>EMI Due Tracker</Typography>
         <Typography variant="body2" color="text.secondary">
-          {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          {new Date(`${todayDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </Typography>
       </Box>
 
@@ -396,7 +309,7 @@ const EmiDues = () => {
           }}
         >
           <Typography variant="h6" fontWeight={800} color="text.primary">
-            {formatCurrency(totalDue)}
+            {totalDue == null ? '—' : formatCurrency(totalDue)}
           </Typography>
           <Typography variant="caption" color="text.secondary" fontWeight={600}>
             Total Due
@@ -404,6 +317,7 @@ const EmiDues = () => {
         </Card>
       </Box>
 
+      {totals.data?.review?.count > 0 && <Alert severity="warning" sx={{ mb: 2 }}>{totals.data.review.count} installments need review. Monetary totals include valid amounts only; open Needs Review for details.</Alert>}
       {/* Search */}
       <TextField
         fullWidth
@@ -417,44 +331,17 @@ const EmiDues = () => {
         }}
       />
 
-      {/* No results */}
-      {!overdue.length && !today.length && !upcoming.length && (
-        <Alert severity="success" sx={{ borderRadius: 2 }}>
-          {search
-            ? 'No results match your search.'
-            : 'All EMI installments are up to date! No pending dues found.'
-          }
-        </Alert>
-      )}
-
-      {/* Overdue */}
-      <Section status="overdue" items={overdue} onNavigate={id => navigate(`/sales/${id}`)} />
-
-      {/* Due today */}
-      <Section status="today" items={today} onNavigate={id => navigate(`/sales/${id}`)} />
-
-      {/* Upcoming */}
-      <Section status="upcoming" items={upcoming} onNavigate={id => navigate(`/sales/${id}`)} />
-
-      {/* Load more */}
-      {!allLoaded && (
-        <Box textAlign="center" mt={2}>
-          <Chip
-            label={loadingMore ? 'Loading...' : 'Load more sales'}
-            onClick={() => !loadingMore && loadBatch(lastDoc)}
-            disabled={loadingMore}
-            icon={loadingMore ? <CircularProgress size={14} /> : undefined}
-            variant="outlined"
-            clickable
-          />
-        </Box>
-      )}
-
-      {allLoaded && dueItems.length > 0 && (
-        <Typography variant="caption" color="text.disabled" display="block" textAlign="center" mt={2}>
-          All EMI sales loaded
-        </Typography>
-      )}
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="fullWidth" sx={{ mb: 2 }}>
+        <Tab value="overdue" label="Overdue" /><Tab value="today" label="Due Today" /><Tab value="upcoming" label="Upcoming 7 Days" /><Tab value="review" label="Needs Review" />
+      </Tabs>
+      <QueryStatus error={view.error || totals.error} loading={view.loading} search={search} />
+      {!view.loading && !view.error && !items.length && search.trim().length !== 1 && <Alert severity="info">No matching dues found.</Alert>}
+      <Section status={tab} items={items} summary={totals.data?.[tab]} onNavigate={id => navigate(`/sales/${id}`)} />
+      <Stack direction="row" justifyContent="flex-end" spacing={1}>
+        <Button disabled={view.loading || view.page === 0} onClick={view.previous}>Previous</Button>
+        <Chip label={`Page ${view.page + 1} · ${view.total ?? '—'} dues`} />
+        <Button disabled={view.loading || !view.hasNext} onClick={view.next}>Next</Button>
+      </Stack>
     </Box>
   );
 };

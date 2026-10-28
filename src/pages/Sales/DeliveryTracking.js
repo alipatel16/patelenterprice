@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, IconButton,
@@ -9,105 +9,19 @@ import {
   LocalShipping, CheckCircle, Schedule, Search, Refresh,
   DoneAll, CalendarMonth, ChevronLeft, ChevronRight,
 } from '@mui/icons-material';
-import {
-  collection, query, where, orderBy, limit, startAfter, startAt, endAt,
-  getDocs, updateDoc, doc, serverTimestamp,
-} from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
+import { updateRecord } from '../../data/writes';
+import usePagedCollection from '../../hooks/usePagedCollection';
+import QueryStatus from '../../components/QueryStatus';
+import { deliveryFilters, indiaDay } from '../../data/salesQueues';
+import { useIndiaDay } from '../../hooks/useSalesQueue';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { formatCurrency, formatDate } from '../../utils';
 import { useMediaQuery, useTheme } from '@mui/material';
 
-const PAGE_SIZE = 10;
-const QUERY_SIZE = PAGE_SIZE + 1;
-const SEARCH_LIMIT = 20;
-const MIN_SEARCH_LENGTH = 2;
-
-const toTitleCase = (value = '') =>
-  value
-    .toLowerCase()
-    .replace(/(^|\s)\S/g, char => char.toUpperCase());
-
-// Firestore does not provide native full-text/substring search. For delivery
-// lookup we use bounded prefix queries against the existing indexed scalar
-// fields instead of downloading a month/collection and filtering in memory.
-// Each field query is capped and the merged result is capped at SEARCH_LIMIT.
-const searchPendingDeliveries = async (db, rawTerm) => {
-  const term = String(rawTerm || '').trim();
-  if (term.length < MIN_SEARCH_LENGTH) return [];
-
-  const searches = [];
-  const seenQueries = new Set();
-
-  const addPrefixSearch = (field, prefix) => {
-    const value = String(prefix || '').trim();
-    if (!value) return;
-    const key = `${field}:${value}`;
-    if (seenQueries.has(key)) return;
-    seenQueries.add(key);
-
-    searches.push(
-      getDocs(query(
-        collection(db, 'sales'),
-        orderBy(field),
-        startAt(value),
-        endAt(`${value}\uf8ff`),
-        limit(SEARCH_LIMIT),
-      ))
-    );
-  };
-
-  // Invoice numbers are generated in uppercase in this app. Customer names
-  // are normally saved in title case, while phones are searched as digits.
-  addPrefixSearch('invoiceNumber', term.toUpperCase());
-  addPrefixSearch('customerName', toTitleCase(term));
-
-  const phoneTerm = term.replace(/\D/g, '');
-  if (phoneTerm.length >= MIN_SEARCH_LENGTH) {
-    addPrefixSearch('customerPhone', phoneTerm);
-  }
-
-  const results = await Promise.allSettled(searches);
-  const merged = new Map();
-  let successfulQueryCount = 0;
-
-  results.forEach(result => {
-    if (result.status !== 'fulfilled') return;
-    successfulQueryCount += 1;
-    result.value.docs.forEach(snapshot => {
-      const sale = { id: snapshot.id, ...snapshot.data() };
-      if (isScheduledSale(sale) && !isSaleDelivered(sale)) {
-        merged.set(snapshot.id, sale);
-      }
-    });
-  });
-
-  if (searches.length > 0 && successfulQueryCount === 0) {
-    const firstError = results.find(result => result.status === 'rejected')?.reason;
-    throw firstError || new Error('Delivery search failed');
-  }
-
-  return Array.from(merged.values())
-    .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''))
-    .slice(0, SEARCH_LIMIT);
-};
-
-// Compatibility guard for old records. New records use boolean isDelivered as
-// the canonical queue field, while these checks ensure an older inconsistent
-// document can never be shown as pending just because isDelivered was stale.
-const isSaleDelivered = (sale = {}) => {
-  if (sale.isDelivered === true || String(sale.isDelivered).toLowerCase() === 'true') return true;
-
-  const status = String(sale.deliveryStatus || '').trim().toLowerCase();
-  if (status === 'delivered' || status === 'completed') return true;
-  if (status === 'pending') return false;
-
-  return Boolean(sale.actualDeliveryDate);
-};
-
-const isScheduledSale = (sale = {}) => sale.deliveryType === 'scheduled';
-
+const PAGE_SIZE = 15;
 const TabPanel = ({ children, value, index }) =>
   value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
 
@@ -142,11 +56,11 @@ const PageControls = ({ page, hasNext, loading, onPrevious, onNext }) => (
 // ─── Mark Delivered Dialog ────────────────────────────────────────────────────
 
 const MarkDeliveredDialog = ({ open, onClose, sale, onConfirm }) => {
-  const [deliveredDate, setDeliveredDate] = useState(new Date().toISOString().split('T')[0]);
+  const [deliveredDate, setDeliveredDate] = useState(indiaDay());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (open) setDeliveredDate(new Date().toISOString().split('T')[0]);
+    if (open) setDeliveredDate(indiaDay());
   }, [open]);
 
   const handleConfirm = async () => {
@@ -197,150 +111,22 @@ const MarkDeliveredDialog = ({ open, onClose, sale, onConfirm }) => {
 };
 
 // ─── Pending Deliveries ───────────────────────────────────────────────────────
-//
-// Fresh queue logic:
-//   • Firestore itself filters isDelivered === false.
-//   • Results are ordered by expected delivery date.
-//   • Only PAGE_SIZE + 1 docs are read per page; the extra doc is used only to
-//     determine whether a Next page exists.
-//   • No count query and no bulk read are performed.
-//   • The compatibility guard hides previously-corrupted legacy records where
-//     deliveryStatus/actualDeliveryDate already prove delivery completion.
-
-const PendingDeliveriesTab = ({ db }) => {
+const PendingDeliveriesTab = ({ db, search, onSearch }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [page, setPage] = useState(0);
-  const pageCursorsRef = useRef([null]);
-  const [hasNext, setHasNext] = useState(false);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [searchRows, setSearchRows] = useState([]);
+  const today = useIndiaDay();
   const [markDialog, setMarkDialog] = useState(null);
-  const searchTimer = useRef(null);
-
-  const handleSearch = (value) => {
-    setSearch(value);
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(value.trim());
-      setPage(0);
-      pageCursorsRef.current = [null];
-    }, 400);
-  };
-
-  const resetToFirstPage = () => {
-    setPage(0);
-    pageCursorsRef.current = [null];
-    setRefreshKey(k => k + 1);
-  };
-
-  useEffect(() => () => clearTimeout(searchTimer.current), []);
-
-  useEffect(() => {
-    if (!db || debouncedSearch) return;
-    let active = true;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        const constraints = [
-          where('isDelivered', '==', false),
-          orderBy('deliveryDate', 'asc'),
-          limit(QUERY_SIZE),
-        ];
-
-        const cursor = pageCursorsRef.current[page];
-        if (page > 0 && cursor) constraints.push(startAfter(cursor));
-
-        let snap;
-        try {
-          snap = await getDocs(query(collection(db, 'sales'), ...constraints));
-        } catch (err) {
-          // Some existing production projects may not yet have the composite
-          // index for isDelivered + deliveryDate. Fall back to the automatic
-          // single-field isDelivered index instead of breaking the live page.
-          if (err?.code !== 'failed-precondition') throw err;
-          const fallbackConstraints = [
-            where('isDelivered', '==', false),
-            limit(QUERY_SIZE),
-          ];
-          if (page > 0 && cursor) fallbackConstraints.push(startAfter(cursor));
-          snap = await getDocs(query(collection(db, 'sales'), ...fallbackConstraints));
-        }
-        if (!active) return;
-
-        // Consume exactly PAGE_SIZE raw documents for this cursor page. The
-        // extra document is only a look-ahead and is not displayed/read again
-        // until the user explicitly requests the next page.
-        const rawPageDocs = snap.docs.slice(0, PAGE_SIZE);
-        const pageRows = rawPageDocs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => isScheduledSale(d) && !isSaleDelivered(d))
-          .sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''));
-
-        setRows(pageRows);
-        setHasNext(snap.docs.length > PAGE_SIZE);
-
-        if (rawPageDocs.length > 0) {
-          const nextCursor = rawPageDocs[rawPageDocs.length - 1];
-          pageCursorsRef.current[page + 1] = nextCursor;
-        }
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load pending deliveries: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    load();
-    return () => { active = false; };
-  }, [db, page, refreshKey, debouncedSearch]);
-
-  // Search mode is intentionally separate from normal pagination. It queries
-  // Firestore across the collection and returns at most SEARCH_LIMIT pending
-  // scheduled deliveries, rather than filtering only the 10 rows on screen.
-  useEffect(() => {
-    if (!db || !debouncedSearch) {
-      setSearchRows([]);
-      return;
-    }
-
-    let active = true;
-    const runSearch = async () => {
-      if (debouncedSearch.length < MIN_SEARCH_LENGTH) {
-        setSearchRows([]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const matches = await searchPendingDeliveries(db, debouncedSearch);
-        if (active) setSearchRows(matches);
-      } catch (err) {
-        if (active) toast.error('Failed to search pending deliveries: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    runSearch();
-    return () => { active = false; };
-  }, [db, debouncedSearch, refreshKey]);
-
-  const visibleRows = debouncedSearch ? searchRows : rows;
+  const view = usePagedCollection(db, 'sales', { search, filters: deliveryFilters('pending'), sort: [['deliveryDate', 'asc']], pageSize: PAGE_SIZE, requireReady: true });
+  const { rows: visibleRows, loading, page, hasNext } = view;
+  const handleSearch = onSearch, debouncedSearch = search;
+  const resetToFirstPage = view.refresh;
 
   const handleMarkDelivered = async (deliveredDate) => {
     if (!markDialog?.id) return;
 
-    await updateDoc(doc(db, 'sales', markDialog.id), {
+    await updateRecord(doc(db, 'sales', markDialog.id), {
       isDelivered: true,
       deliveryStatus: 'delivered',
       actualDeliveryDate: deliveredDate,
@@ -353,7 +139,7 @@ const PendingDeliveriesTab = ({ db }) => {
   };
 
   const isOverdue = (deliveryDate) =>
-    deliveryDate ? new Date(`${deliveryDate}T23:59:59`) < new Date() : false;
+    deliveryDate ? deliveryDate < today : false;
 
   return (
     <Box>
@@ -378,6 +164,7 @@ const PendingDeliveriesTab = ({ db }) => {
         </Tooltip>
       </Stack>
 
+      <QueryStatus error={view.error} search={search} />
       <Card>
         <TableContainer>
           <Table size="small">
@@ -409,8 +196,8 @@ const PendingDeliveriesTab = ({ db }) => {
                           <DoneAll sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
                           <Typography color="text.secondary">
                             {debouncedSearch
-                              ? debouncedSearch.length < MIN_SEARCH_LENGTH
-                                ? `Type at least ${MIN_SEARCH_LENGTH} characters to search`
+                              ? debouncedSearch.length < 2
+                                ? `Type at least ${2} characters to search`
                                 : 'No matching pending deliveries found'
                               : 'No pending deliveries on this page'}
                           </Typography>
@@ -484,21 +271,7 @@ const PendingDeliveriesTab = ({ db }) => {
           </Table>
         </TableContainer>
 
-        {debouncedSearch ? (
-          <Box sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
-            <Typography variant="caption" color="text.secondary">
-              Showing up to {SEARCH_LIMIT} matches from the full sales collection
-            </Typography>
-          </Box>
-        ) : (
-          <PageControls
-            page={page}
-            hasNext={hasNext}
-            loading={loading}
-            onPrevious={() => setPage(p => Math.max(0, p - 1))}
-            onNext={() => hasNext && setPage(p => p + 1)}
-          />
-        )}
+        <PageControls page={page} hasNext={hasNext} loading={loading} onPrevious={view.previous} onNext={view.next} />
       </Card>
 
       <MarkDeliveredDialog
@@ -512,69 +285,19 @@ const PendingDeliveriesTab = ({ db }) => {
 };
 
 // ─── Delivered ────────────────────────────────────────────────────────────────
-//
-// Marking a scheduled delivery writes actualDeliveryDate. Firestore orderBy
-// only returns documents where that field exists, so immediate sales are not
-// loaded into this tab at all. This keeps the delivered history on-demand and
-// avoids scanning ordinary sales.
-
-const RecentlyDeliveredTab = ({ db }) => {
+const RecentlyDeliveredTab = ({ db, search, onSearch, outstanding = false }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
 
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(0);
-  const pageCursorsRef = useRef([null]);
-  const [hasNext, setHasNext] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    if (!db) return;
-    let active = true;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        const constraints = [
-          orderBy('actualDeliveryDate', 'desc'),
-          limit(QUERY_SIZE),
-        ];
-        const cursor = pageCursorsRef.current[page];
-        if (page > 0 && cursor) constraints.push(startAfter(cursor));
-
-        const snap = await getDocs(query(collection(db, 'sales'), ...constraints));
-        if (!active) return;
-
-        const rawPageDocs = snap.docs.slice(0, PAGE_SIZE);
-        const pageRows = rawPageDocs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(d => isScheduledSale(d) && isSaleDelivered(d));
-
-        setRows(pageRows);
-        setHasNext(snap.docs.length > PAGE_SIZE);
-
-        if (rawPageDocs.length > 0) {
-          const nextCursor = rawPageDocs[rawPageDocs.length - 1];
-          pageCursorsRef.current[page + 1] = nextCursor;
-        }
-      } catch (err) {
-        if (!active) return;
-        toast.error('Failed to load delivered items: ' + err.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    load();
-    return () => { active = false; };
-  }, [db, page, refreshKey]);
-
-  const refreshCurrent = () => setRefreshKey(k => k + 1);
+  const view = usePagedCollection(db, 'sales', { search, filters: deliveryFilters(outstanding ? 'outstanding' : 'delivered'), sort: [['actualDeliveryDate', 'desc']], pageSize: PAGE_SIZE, requireReady: true });
+  const { rows, loading, page, hasNext } = view;
+  const refreshCurrent = view.refresh;
 
   return (
     <Box>
+      <TextField fullWidth size="small" placeholder="Search customer, phone or invoice..." value={search} onChange={e => onSearch(e.target.value)} sx={{ mt: 1, mb: 1 }} />
+      <QueryStatus error={view.error} search={search} />
       <Box display="flex" justifyContent="flex-end" sx={{ mb: 1 }}>
         <Tooltip title="Refresh delivered history">
           <span>
@@ -640,6 +363,7 @@ const RecentlyDeliveredTab = ({ db }) => {
                       {!isMobile && (
                         <TableCell align="right">
                           <Typography variant="body2" fontWeight={600}>{formatCurrency(row.grandTotal)}</Typography>
+                          {row.hasOutstandingPayment && <Typography variant="caption" color="error">Payment pending: {row.outstandingPaymentAmount == null ? 'Needs reconciliation' : formatCurrency(row.outstandingPaymentAmount)}</Typography>}
                         </TableCell>
                       )}
                     </TableRow>
@@ -652,8 +376,8 @@ const RecentlyDeliveredTab = ({ db }) => {
           page={page}
           hasNext={hasNext}
           loading={loading}
-          onPrevious={() => setPage(p => Math.max(0, p - 1))}
-          onNext={() => hasNext && setPage(p => p + 1)}
+          onPrevious={view.previous}
+          onNext={view.next}
         />
       </Card>
     </Box>
@@ -665,6 +389,7 @@ const RecentlyDeliveredTab = ({ db }) => {
 const DeliveryTracking = () => {
   const { db } = useAuth();
   const [tab, setTab] = useState(0);
+  const [search, setSearch] = useState('');
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       <Box display="flex" alignItems="center" gap={2} mb={3}>
@@ -689,14 +414,18 @@ const DeliveryTracking = () => {
         <Tabs value={tab} onChange={(_, value) => setTab(value)}>
           <Tab icon={<Schedule fontSize="small" />} iconPosition="start" label="Pending Deliveries" />
           <Tab icon={<DoneAll fontSize="small" />} iconPosition="start" label="Delivered" />
+          <Tab label="Delivered · Payment Pending" />
         </Tabs>
       </Box>
 
       <TabPanel value={tab} index={0}>
-        <PendingDeliveriesTab db={db} />
+        <PendingDeliveriesTab db={db} search={search} onSearch={setSearch} />
       </TabPanel>
       <TabPanel value={tab} index={1}>
-        <RecentlyDeliveredTab db={db} />
+        <RecentlyDeliveredTab db={db} search={search} onSearch={setSearch} />
+      </TabPanel>
+      <TabPanel value={tab} index={2}>
+        <RecentlyDeliveredTab db={db} search={search} onSearch={setSearch} outstanding />
       </TabPanel>
     </Box>
   );
